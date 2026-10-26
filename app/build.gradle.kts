@@ -88,4 +88,6 @@ dependencies {
     implementation(libs.play.services.maps)
     implementation(libs.maps.compose)
     implementation(libs.play.services.location)
+    // Play 서비스가 끌어오는 오래된 Fragment를 최신으로 (권한 요청 API 요구사항)
+    implementation(libs.androidx.fragment)
 }
