@@ -250,7 +250,6 @@ fun MapScreen(
             },
             stays = stays,
             onStayClick = { st -> selectedStay = st; selected = null; selectedTrip = null },
-            onPoiFound = { lat, lng, name -> vm.savePoi(lat, lng, name) },
             styleName = settings.mapStyle,
             places = places,
             me = me,

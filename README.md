@@ -26,7 +26,9 @@ Dot(할 일 앱)과 같은 미니멀 다크 + 라임 포인트 스타일입니�
 - 위치 기록은 기기의 로컬 DB(Room/SQLite)에만 저장하고, 어떤 서버로도 보내지 않습니다.
 - 위치는 배터리를 아끼기 위해 OS의 **Fused Location**(GPS + Wi-Fi + 센서)에서 받습니다.
   이 과정에서 OS가 Wi-Fi·기지국 정보를 구글 위치 서비스에 조회할 수 있지만, 기록 자체는 휴대폰에만 남습니다.
-- 지도는 **MapLibre + OpenFreeMap**(OpenStreetMap 데이터)을 씁니다. 회원가입·API 키·결제 계정이 없고, 지도 배경(타일)만 받아옵니다.
+- 지도는 **Google 지도**를 씁니다. 지도 배경만 받아오고 위치 기록은 보내지 않습니다.
+- **머문 곳 이름 찾기**(설정에서 켜고 끔): 이름 모르는 머문 곳의 좌표 하나만 Google Places API에 보내 근처 상호 이름을 받습니다.
+  이동 경로는 보내지 않고, 받은 이름은 30일 뒤 지웁니다. 하루 최대 100번까지만 묻습니다.
 - 안드로이드 자동 백업(`allowBackup`)도 꺼서 구글 드라이브로 복사되지 않습니다. 백업은 GPX 내보내기로 직접 하세요.
 
 ---
@@ -61,7 +63,10 @@ Dot 앱과 같은 서명 키(`dot-debug.keystore.base64.txt`)의 내용 전체�
 이 키의 SHA-1: `12:8B:4E:D3:59:9E:8B:87:BC:0C:ED:64:C2:11:A8:8F:A8:24:9D:4D`
 빌드마다 같은 키로 서명해야 새 버전을 덮어쓰기 설치할 수 있습니다.
 
-지도 API 키는 필요 없습니다.
+### `MAPS_API_KEY` — Google 지도·장소 키
+Google Cloud에서 **Maps SDK for Android**와 **Places API (New)**를 켜고 만든 API 키.
+키 제한: Android 앱(패키지 `com.dot.trace` + 위 SHA-1), API는 위 두 개만.
+없으면 지도 배경과 장소 이름이 표시되지 않습니다 (기록은 동작).
 
 ## 2. 설치
 
@@ -96,5 +101,6 @@ Dot 앱과 같은 서명 키(`dot-debug.keystore.base64.txt`)의 내용 전체�
 | `tracking/BootReceiver.kt` | 재부팅·업데이트 후 기록 재시작 |
 | `data/AppDatabase.kt` | Room DB (`points` 테이블: 시각, 위도, 경도, 정확도, 고도, 속도) |
 | `ui/MapScreen.kt` | 날짜 선택 + 상태 카드 + 이동 목록 |
-| `ui/TraceMap.kt` | MapLibre 지도와 경로·지점 레이어 |
+| `ui/TraceMap.kt` | Google 지도와 경로·지점·머문 곳 표시 |
+| `places/GooglePlaces.kt` | 머문 곳 근처 상호 이름 찾기 (Places API) |
 | `ui/SettingsScreen.kt` | 주기, 권한, GPX 내보내기, 삭제 |

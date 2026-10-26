@@ -155,14 +155,27 @@ data class ModeRuleEntity(
     val mode: String,
 )
 
-/** 지도 데이터에서 찾은 근처 상호·건물 이름 (서버에 묻지 않고 지도 그림 안에서 찾음) */
+/**
+ * 머문 곳 근처 상호·건물 이름.
+ * source: "map"(예전 지도 데이터에서 찾음) 또는 "google"(Google 장소 정보, 30일 지나면 지우고 다시 찾음)
+ */
 @Entity(tableName = "poi_names")
 data class PoiNameEntity(
     @PrimaryKey val key: String,
     val lat: Double,
     val lng: Double,
     val name: String,
-)
+    val source: String = SOURCE_MAP,
+    val fetchedAt: Long = 0,
+    val placeId: String? = null,
+) {
+    companion object {
+        const val SOURCE_MAP = "map"
+        const val SOURCE_GOOGLE = "google"
+        /** Google 장소 정보는 30일까지만 보관 */
+        const val GOOGLE_KEEP_MS = 30L * 24 * 3_600_000
+    }
+}
 
 /** 하루 분석 결과 저장 (기록이 바뀌지 않았으면 다시 분석하지 않음 → 리포트가 빨라짐) */
 @Entity(tableName = "day_cache")
@@ -208,6 +221,13 @@ interface AnalysisDao {
     @Insert(onConflict = androidx.room.OnConflictStrategy.REPLACE)
     suspend fun putPoi(p: PoiNameEntity)
 
+    /** 오래된 Google 장소 이름 지우기 */
+    @Query("DELETE FROM poi_names WHERE source = 'google' AND fetchedAt < :before")
+    suspend fun purgeGooglePoi(before: Long): Int
+
+    @Query("DELETE FROM poi_names WHERE source = 'google'")
+    suspend fun deleteGooglePoi(): Int
+
     @Query("SELECT * FROM day_cache WHERE day = :day")
     suspend fun cached(day: String): DayCacheEntity?
 
@@ -220,7 +240,7 @@ interface AnalysisDao {
 
 @Database(
     entities = [PointEntity::class, PlaceEntity::class, OverrideEntity::class, ModeRuleEntity::class, PoiNameEntity::class, DayCacheEntity::class],
-    version = 5,
+    version = 6,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -233,7 +253,7 @@ abstract class AppDatabase : RoomDatabase() {
 
         fun get(context: Context): AppDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(context.applicationContext, AppDatabase::class.java, "dottrace.db")
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
                 .build()
                 .also { instance = it }
         }
@@ -286,6 +306,15 @@ abstract class AppDatabase : RoomDatabase() {
                     "CREATE TABLE IF NOT EXISTS day_cache (day TEXT PRIMARY KEY NOT NULL, " +
                         "pointCount INTEGER NOT NULL, lastTime INTEGER NOT NULL, data TEXT NOT NULL)"
                 )
+            }
+        }
+
+        /** 장소 이름 출처(Google)와 가져온 시각 */
+        private val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE poi_names ADD COLUMN source TEXT NOT NULL DEFAULT 'map'")
+                db.execSQL("ALTER TABLE poi_names ADD COLUMN fetchedAt INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE poi_names ADD COLUMN placeId TEXT")
             }
         }
     }

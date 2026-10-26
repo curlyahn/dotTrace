@@ -102,6 +102,15 @@ fun TimelineSheet(
                     TimelineRow(s, first = i == 0, last = i == segments.lastIndex, onClick = { onPick(s) }, onEdit = { onEdit(s) })
                 }
             }
+            // Google 장소 정보로 붙인 이름이 있으면 출처 표시
+            if (segments.any { it.nameFromGoogle }) {
+                Text(
+                    "장소 이름 일부: Google Maps",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Dot.Faint,
+                    modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 8.dp),
+                )
+            }
             Spacer(Modifier.height(12.dp))
         }
     }

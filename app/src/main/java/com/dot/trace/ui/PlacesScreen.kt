@@ -68,7 +68,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.dot.trace.data.PlaceEntity
 import com.dot.trace.data.rememberAddress
 import com.dot.trace.ui.theme.Dot
-import org.maplibre.android.geometry.LatLng
+import com.google.android.gms.maps.model.LatLng
 
 /** 설정 → 내 장소: 집, 회사, 자주 가는 곳(최대 10개) */
 @Composable

@@ -37,12 +37,17 @@ object DayAnalyzer {
         val ov = c.overrides.filter { overlaps(seg, it) }.maxByOrNull { overlap(seg, it) }
         if (seg.stay) {
             val place = c.places.match(seg.lat, seg.lng)
-            val poi = c.poi.map { it to Geo.distance(seg.lat, seg.lng, it.lat, it.lng) }
-                .filter { it.second <= POI_RADIUS_M }.minByOrNull { it.second }?.first
+            // Google 장소 이름이 있으면 먼저, 없으면 예전 지도에서 찾은 이름
+            val near = c.poi.map { it to Geo.distance(seg.lat, seg.lng, it.lat, it.lng) }
+                .filter { it.second <= POI_RADIUS_M && it.first.name.isNotBlank() }
+            val poi = (near.filter { it.first.source == PoiNameEntity.SOURCE_GOOGLE }.minByOrNull { it.second }
+                ?: near.minByOrNull { it.second })?.first
+            val name = ov?.name ?: place?.name ?: poi?.name
             seg.copy(
-                name = ov?.name ?: place?.name ?: poi?.name,
+                name = name,
                 edited = ov?.name != null,
                 placeKind = place?.kind,
+                nameFromGoogle = ov?.name == null && place == null && poi?.source == PoiNameEntity.SOURCE_GOOGLE,
             )
         } else {
             val overridden = ov?.mode?.let { runCatching { TransportMode.valueOf(it) }.getOrNull() }

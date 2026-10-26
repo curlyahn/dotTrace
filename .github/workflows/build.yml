@@ -44,7 +44,17 @@ jobs:
           echo "DOT_KEYSTORE=$RUNNER_TEMP/dot.keystore" >> "$GITHUB_ENV"
           echo "SIGNED_WITH_DOT_KEY=true" >> "$GITHUB_ENV"
 
+      - name: Check Maps API key
+        env:
+          MAPS_API_KEY: ${{ secrets.MAPS_API_KEY }}
+        run: |
+          if [ -z "$MAPS_API_KEY" ]; then
+            echo "::warning::MAPS_API_KEY secret이 없어 지도 배경과 장소 이름이 표시되지 않습니다 (기록 기능은 동작)."
+          fi
+
       - name: Build debug and release APK
+        env:
+          MAPS_API_KEY: ${{ secrets.MAPS_API_KEY }}
         run: |
           chmod +x gradlew
           set -o pipefail

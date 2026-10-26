@@ -16,21 +16,30 @@ data class Settings(
     val intervalMinutes: Int = DEFAULT_INTERVAL_MINUTES,
     /** 사용자가 기록을 켜 둔 상태인지. 재부팅·업데이트 후 자동 재시작 판단에 쓴다. */
     val trackingEnabled: Boolean = false,
-    /** 지도 스타일 (OpenFreeMap 스타일 이름) */
+    /** 지도 스타일 (standard, silver, night, satellite) */
     val mapStyle: String = DEFAULT_MAP_STYLE,
+    /** 머문 곳 이름을 Google 장소 정보에서 찾을지 (머문 곳 좌표가 Google로 전송됨) */
+    val googlePlaces: Boolean = true,
 ) {
     companion object {
         const val DEFAULT_INTERVAL_MINUTES = 1
         val INTERVAL_CHOICES = listOf(1, 2, 3, 5, 10, 15, 30)
-        const val DEFAULT_MAP_STYLE = "liberty"
-        /** OpenFreeMap이 제공하는 지도 스타일과 화면에 보일 이름 */
+        const val DEFAULT_MAP_STYLE = "standard"
+        /** 지도 스타일과 화면에 보일 이름 */
         val MAP_STYLES = listOf(
-            "liberty" to "기본",
-            "bright" to "선명하게",
-            "positron" to "심플",
-            "fiord" to "차분하게",
-            "dark" to "어둡게",
+            "standard" to "기본",
+            "silver" to "심플",
+            "night" to "어둡게",
+            "satellite" to "위성",
         )
+
+        /** 예전(OpenFreeMap) 스타일 이름을 새 이름으로 */
+        fun migrateStyle(s: String?): String? = when (s) {
+            "liberty", "bright" -> "standard"
+            "positron" -> "silver"
+            "fiord", "dark" -> "night"
+            else -> s
+        }
     }
 }
 
@@ -44,13 +53,16 @@ class Prefs(context: Context) {
         val reportSeen = androidx.datastore.preferences.core.stringPreferencesKey("report_seen")
         val reportNotified = androidx.datastore.preferences.core.stringPreferencesKey("report_notified")
         val suggestDismissed = androidx.datastore.preferences.core.stringPreferencesKey("suggest_dismissed")
+        val googlePlaces = booleanPreferencesKey("google_places")
+        val placesQuota = androidx.datastore.preferences.core.stringPreferencesKey("places_quota")
     }
 
     val settings: Flow<Settings> = ds.data.map { p ->
         Settings(
             intervalMinutes = (p[K.interval] ?: Settings.DEFAULT_INTERVAL_MINUTES).coerceIn(1, 120),
             trackingEnabled = p[K.tracking] ?: false,
-            mapStyle = p[K.mapStyle]?.takeIf { s -> Settings.MAP_STYLES.any { it.first == s } } ?: Settings.DEFAULT_MAP_STYLE,
+            googlePlaces = p[K.googlePlaces] ?: true,
+            mapStyle = Settings.migrateStyle(p[K.mapStyle])?.takeIf { s -> Settings.MAP_STYLES.any { it.first == s } } ?: Settings.DEFAULT_MAP_STYLE,
         )
     }
 
@@ -61,6 +73,25 @@ class Prefs(context: Context) {
     suspend fun setTrackingEnabled(enabled: Boolean) = ds.edit { it[K.tracking] = enabled }
 
     suspend fun setMapStyle(style: String) = ds.edit { it[K.mapStyle] = style }
+
+    suspend fun setGooglePlaces(on: Boolean) = ds.edit { it[K.googlePlaces] = on }
+
+    /**
+     * 장소 조회 하루 횟수 제한. 남아 있으면 1 쓰고 true.
+     * 저장 형식: "2026-10-26:12"
+     */
+    suspend fun takePlacesQuota(today: String, limit: Int): Boolean {
+        var ok = false
+        ds.edit {
+            val (d, n) = it[K.placesQuota]?.split(':')?.let { f -> f[0] to (f.getOrNull(1)?.toIntOrNull() ?: 0) } ?: ("" to 0)
+            val used = if (d == today) n else 0
+            if (used < limit) {
+                ok = true
+                it[K.placesQuota] = "$today:${used + 1}"
+            }
+        }
+        return ok
+    }
 
     /** 마지막으로 열어 본 리포트 기간 (예: M2026-10) — 앱 안 '리포트 준비됨' 안내를 한 번만 보여 주려고 */
     suspend fun reportSeen(): String? = ds.data.first()[K.reportSeen]

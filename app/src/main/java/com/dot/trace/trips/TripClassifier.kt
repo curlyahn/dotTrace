@@ -56,6 +56,8 @@ data class Segment(
     val edited: Boolean = false,
     /** 내 장소(집·회사 등)의 종류, 아니면 null */
     val placeKind: String? = null,
+    /** 이름이 Google 장소 정보에서 왔으면 true (출처 표시용) */
+    val nameFromGoogle: Boolean = false,
 ) {
     val durationMs: Long get() = end - start
 }

@@ -114,10 +114,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /** 지도에서 찾은 상호 이름 저장 */
-    fun savePoi(lat: Double, lng: Double, name: String) = viewModelScope.launch {
-        analysis.putPoi(PoiNameEntity(DayAnalyzer.poiKey(lat, lng), lat, lng, name))
-    }
 
     val rules: StateFlow<List<ModeRuleEntity>> = analysis.observeRules()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -257,6 +253,61 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setMapStyle(style: String) = viewModelScope.launch { app.prefs.setMapStyle(style) }
 
+    // ── Google 장소 이름 ──
+
+    /** 끄면 이미 받은 Google 장소 이름도 지운다 */
+    fun setGooglePlaces(on: Boolean) = viewModelScope.launch {
+        app.prefs.setGooglePlaces(on)
+        if (!on) analysis.deleteGooglePoi()
+    }
+
+    /** 이번 실행 중 이미 물어본 머문 곳 (같은 곳을 반복해서 묻지 않게) */
+    private val placeTried = HashSet<String>()
+
+    init {
+        viewModelScope.launch(Dispatchers.IO) {
+            // Google 장소 정보는 30일까지만 보관한다
+            analysis.purgeGooglePoi(System.currentTimeMillis() - PoiNameEntity.GOOGLE_KEEP_MS)
+        }
+        // 화면에 보이는 날의 머문 곳 중 이름 모르는 곳을 Google 장소 정보에서 찾는다
+        viewModelScope.launch {
+            kotlinx.coroutines.flow.combine(trips, settings) { t, s -> t to s }
+                .collect { (t, s) -> if (s.googlePlaces) lookupNames(t.segments) }
+        }
+    }
+
+    private suspend fun lookupNames(segments: List<Segment>) {
+        if (!com.dot.trace.places.GooglePlaces.available) return
+        val todo = segments.filter { it.stay && !it.edited && it.placeKind == null && !it.nameFromGoogle }
+        if (todo.isEmpty()) return
+        val known = withContext(Dispatchers.IO) { analysis.poi() }.filter { it.source == PoiNameEntity.SOURCE_GOOGLE }.toMutableList()
+        for (st in todo) {
+            val key = DayAnalyzer.poiKey(st.lat, st.lng)
+            if (!placeTried.add(key)) continue
+            // 이미 물어봤던 곳(이름을 못 찾은 곳 포함)이면 넘어간다
+            if (known.any { com.dot.trace.data.Geo.distance(st.lat, st.lng, it.lat, it.lng) <= DayAnalyzer.POI_RADIUS_M }) continue
+            if (!app.prefs.takePlacesQuota(LocalDate.now(zone).toString(), PLACES_DAILY_LIMIT)) return
+            val found = com.dot.trace.places.GooglePlaces.nearest(app, st.lat, st.lng)
+            val err = com.dot.trace.places.GooglePlaces.lastError
+            if (found == null && err != null) {
+                // 키·네트워크 문제: 다음에 다시 시도할 수 있게 기록하지 않는다
+                placeTried.remove(key)
+                android.util.Log.w("DotTrace", "Places lookup failed: $err")
+                return
+            }
+            // 못 찾은 곳도 빈 이름으로 기록해 30일 동안 다시 묻지 않는다
+            val entity = PoiNameEntity(
+                key = key, lat = st.lat, lng = st.lng,
+                name = found?.name ?: "",
+                source = PoiNameEntity.SOURCE_GOOGLE,
+                fetchedAt = System.currentTimeMillis(),
+                placeId = found?.id,
+            )
+            analysis.putPoi(entity)
+            known += entity
+        }
+    }
+
     suspend fun setTrackingEnabled(enabled: Boolean) = app.prefs.setTrackingEnabled(enabled)
 
     /** 선택한 날짜(또는 전체)를 GPX로 저장. 저장한 점 개수를 돌려준다. */
@@ -275,4 +326,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun startOf(d: LocalDate): Long = d.atStartOfDay(zone).toInstant().toEpochMilli()
+
+    companion object {
+        /** 장소 조회는 하루 최대 100번 (무료 사용량 안에서) */
+        const val PLACES_DAILY_LIMIT = 100
+    }
 }

@@ -149,6 +149,14 @@ private fun ReportBody(r: Report, onShowPlace: (Double, Double) -> Unit) {
                 PlaceStatRow(i + 1, p) { onShowPlace(p.lat, p.lng) }
             }
         }
+        if (com.dot.trace.places.GooglePlaces.available) {
+            Text(
+                "장소 이름 일부: Google Maps",
+                style = MaterialTheme.typography.labelSmall,
+                color = Dot.Faint,
+                modifier = Modifier.padding(top = 6.dp, start = 4.dp),
+            )
+        }
     }
 
     // 방문한 지역

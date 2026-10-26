@@ -163,6 +163,33 @@ fun SettingsScreen(
             }
         }
 
+        // 머문 곳 이름: Google 장소 정보
+        Row(
+            Modifier.fillMaxWidth().clickable { vm.setGooglePlaces(!settings.googlePlaces) }
+                .padding(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("머문 곳 이름 Google에서 찾기", style = MaterialTheme.typography.titleMedium, color = Dot.Text)
+                Text(
+                    if (com.dot.trace.places.GooglePlaces.available)
+                        "이름 모르는 머문 곳의 좌표 하나만 Google에 보내 근처 상호 이름을 받아요. 이동 경로는 보내지 않아요. 받은 이름은 30일 뒤 지워요. 끄면 받은 이름도 지워요."
+                    else "이 빌드에는 Google 지도 키가 없어 쓸 수 없어요.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Dot.Muted,
+                )
+            }
+            Spacer(Modifier.width(12.dp))
+            androidx.compose.material3.Switch(
+                checked = settings.googlePlaces,
+                onCheckedChange = { vm.setGooglePlaces(it) },
+                colors = androidx.compose.material3.SwitchDefaults.colors(
+                    checkedThumbColor = Dot.OnLime,
+                    checkedTrackColor = Dot.Lime,
+                ),
+            )
+        }
+
         Section("안정적으로 기록하기")
         StatusRow(
             title = "신체 활동 감지",
