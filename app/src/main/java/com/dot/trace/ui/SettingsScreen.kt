@@ -102,7 +102,7 @@ fun SettingsScreen(
 
         Section("기록 주기")
         Text(
-            "움직이는 동안 위치를 몇 분마다 저장할지 고르세요. 가만히 있으면 위치 업데이트를 끄고, 신호가 없으면 잡힐 때까지 10초마다 다시 시도해요.",
+            "움직이는 동안 위치를 몇 분마다 저장할지 고르세요. 빠르게 이동하면(시속 30km 이상) 15초마다 기록하고, 가만히 있으면 위치 업데이트를 꺼요. 신호가 없으면 10초마다 다시 시도하다가 오래 이어지면 최대 15분 간격까지 늘려요.",
             style = MaterialTheme.typography.bodySmall,
             color = Dot.Muted,
             modifier = Modifier.padding(horizontal = 20.dp),

@@ -66,6 +66,7 @@ import com.dot.trace.R
 import com.dot.trace.data.PointEntity
 import com.dot.trace.tracking.Phase
 import com.dot.trace.tracking.TrackerStatus
+import com.dot.trace.tracking.TrackingService
 import com.dot.trace.ui.theme.Dot
 import com.google.android.gms.maps.CameraUpdateFactory
 import com.google.android.gms.maps.model.BitmapDescriptor
@@ -359,7 +360,8 @@ private fun StatusCard(
         Phase.Idle -> Dot.Faint to "기록 꺼짐"
         Phase.Moving -> Dot.Lime to "기록 중$last"
         Phase.Still -> Dot.Muted to "머무는 중 · 위치 업데이트 쉬는 중$last"
-        Phase.Searching -> Dot.Amber to "위치 신호 찾는 중 · 10초마다 시도$last"
+        Phase.MovingFast -> Dot.Lime to "빠르게 이동 중 · 15초마다 기록$last"
+        Phase.Searching -> Dot.Amber to "위치 신호 찾는 중 · ${TrackingService.retryLabel(status.retryIntervalMs)}마다 시도$last"
         Phase.LocationOff -> Dot.Coral to "휴대폰 위치 설정을 켜 주세요"
     }
 

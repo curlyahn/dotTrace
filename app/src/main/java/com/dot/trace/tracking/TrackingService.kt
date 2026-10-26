@@ -60,14 +60,17 @@ import java.util.Locale
  *   최근 5분간 위치가 25m 안에만 머무른 것으로 판단한다.
  *   다시 움직이면 활동 인식이나 '큰 움직임 감지' 하드웨어 센서(Significant Motion)가 깨워 준다.
  *   (둘 다 없는 휴대폰에서만 15분에 한 번 확인)
- * - 제때 위치가 오지 않으면(터널·엘리베이터): 10초마다 다시 시도하고, 잡히면 원래 주기로 돌아간다.
+ * - 빠르게 이동 중(시속 30km 이상): 15초마다 기록해 경로를 부드럽게 그린다. 느려지면 원래 주기로.
+ * - 제때 위치가 오지 않으면(터널·엘리베이터): 처음 3분은 10초마다 다시 시도하고,
+ *   계속 안 잡히면 30초 → 1분 → 5분 → 최대 15분 간격으로 점점 늘려 배터리를 아낀다.
+ *   잡히면 원래 주기로 돌아간다.
  * - 정확도가 [MAX_ACCURACY_M]보다 나쁜 위치(기지국 위치 등)는 저장하지 않는다.
  * - CPU를 깨워 두는 WakeLock은 쓰지 않는다. 위치가 올 때만 OS가 앱을 깨운다.
  */
 @SuppressLint("MissingPermission") // 서비스 시작 전에 화면에서 위치 권한을 확인한다
 class TrackingService : LifecycleService() {
 
-    private enum class Mode { Normal, Still, Retry }
+    private enum class Mode { Normal, Fast, Still, Retry }
 
     private val app get() = application as TraceApp
     private lateinit var fused: FusedLocationProviderClient
@@ -80,6 +83,11 @@ class TrackingService : LifecycleService() {
     private var lastAcceptedAt = 0L
     private var lastSavedTime = 0L
     private var modeSince = 0L
+    /** 신호를 잃고 재시도를 시작한 시각, 지금 쓰는 재시도 간격 */
+    private var retryStartedAt = 0L
+    private var retryIntervalMs = RETRY_INTERVAL_MS
+    /** 빠른 이동 모드에서 속도가 느려지기 시작한 시각 */
+    private var slowSince = 0L
     private var watchdog: Job? = null
     private var transitionsOn = false
     private val sensors by lazy { getSystemService(SensorManager::class.java) }
@@ -153,7 +161,7 @@ class TrackingService : LifecycleService() {
                 // 기록 중에 주기 설정을 바꾸면 바로 반영
                 app.prefs.settings.map { it.intervalMinutes }.distinctUntilChanged().drop(1).collect { m ->
                     intervalMs = m * 60_000L
-                    if (mode == Mode.Normal) applyMode(Mode.Normal)
+                    if (mode == Mode.Normal || mode == Mode.Fast) applyMode(mode)
                 }
             }
         }
@@ -174,22 +182,33 @@ class TrackingService : LifecycleService() {
     // ── 위치 요청 ────────────────────────────────────────────
 
     private fun applyMode(newMode: Mode) {
+        val now = System.currentTimeMillis()
+        if (newMode == Mode.Retry && mode != Mode.Retry) {
+            retryStartedAt = now
+            retryIntervalMs = RETRY_INTERVAL_MS
+        }
+        if (newMode == Mode.Fast && mode != Mode.Fast) slowSince = 0L
+        if (newMode != mode) modeSince = now
         mode = newMode
-        modeSince = System.currentTimeMillis()
         val request = when (newMode) {
             // 주기마다 정확한 위치. OS가 최대 주기 2배까지 모아서 한 번에 전달 → 앱 깨우는 횟수 절반
             Mode.Normal -> LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, intervalMs)
                 .setMinUpdateIntervalMillis(intervalMs)
                 .setMaxUpdateDelayMillis(intervalMs * 2)
                 .build()
+            // 빠르게 이동 중: 15초마다. 최대 1분치를 모아서 전달 → 매 15초마다 깨지 않음
+            Mode.Fast -> LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, FAST_INTERVAL_MS)
+                .setMinUpdateIntervalMillis(FAST_INTERVAL_MS)
+                .setMaxUpdateDelayMillis(FAST_BATCH_MS)
+                .build()
             // 정지 중: 깨워 줄 센서가 있으면 위치를 아예 받지 않는다. 없을 때만 15분에 한 번
             Mode.Still -> if (canWakeOnMotion()) null else
                 LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, maxOf(STILL_INTERVAL_MS, intervalMs))
                     .setMinUpdateIntervalMillis(maxOf(STILL_INTERVAL_MS, intervalMs))
                     .build()
-            // 신호를 잃음: 잡힐 때까지 10초마다, 모으지 않고 바로 전달
-            Mode.Retry -> LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, RETRY_INTERVAL_MS)
-                .setMinUpdateIntervalMillis(RETRY_INTERVAL_MS)
+            // 신호를 잃음: 처음엔 10초마다, 오래 계속되면 점점 길게 (최대 15분). 모으지 않고 바로 전달
+            Mode.Retry -> LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, retryIntervalMs)
+                .setMinUpdateIntervalMillis(retryIntervalMs)
                 .build()
         }
         fused.removeLocationUpdates(callback)
@@ -200,11 +219,17 @@ class TrackingService : LifecycleService() {
             disarmMotionSensor()
             recent.clear()
         }
-        setPhase(if (isLocationEnabled()) phaseFor(newMode) else Phase.LocationOff)
+        updateStatus {
+            it.copy(
+                phase = if (isLocationEnabled()) phaseFor(newMode) else Phase.LocationOff,
+                retryIntervalMs = if (newMode == Mode.Retry) retryIntervalMs else null,
+            )
+        }
     }
 
     private fun phaseFor(m: Mode) = when (m) {
         Mode.Normal -> Phase.Moving
+        Mode.Fast -> Phase.MovingFast
         Mode.Still -> Phase.Still
         Mode.Retry -> Phase.Searching
     }
@@ -216,7 +241,11 @@ class TrackingService : LifecycleService() {
             return
         }
         // 한 번에 여러 개가 오면(모아서 전달) 주기보다 촘촘한 것은 건너뛴다
-        val minGap = (if (mode == Mode.Still) STILL_INTERVAL_MS else intervalMs) - 5_000L
+        val minGap = when (mode) {
+            Mode.Fast -> FAST_INTERVAL_MS - 3_000L
+            Mode.Still -> STILL_INTERVAL_MS - 5_000L
+            else -> intervalMs - 5_000L
+        }
         val toSave = ArrayList<Location>()
         var last = lastSavedTime
         for (l in good.sortedBy { it.time }) {
@@ -243,13 +272,42 @@ class TrackingService : LifecycleService() {
                 )
             }
         }
+        val prevSaved = lastSavedLocation
         val newest = toSave.last()
+        lastSavedLocation = newest
         updateStatus { it.copy(lastFixAt = newest.time, lastAccuracy = newest.accuracy) }
+
+        val speed = estimateSpeed(prevSaved, toSave)
         when (mode) {
-            Mode.Retry -> applyMode(Mode.Normal)
-            Mode.Normal -> detectStill(toSave)
+            Mode.Retry -> applyMode(if (speed >= FAST_ENTER_MPS && intervalMs > FAST_INTERVAL_MS) Mode.Fast else Mode.Normal)
+            Mode.Normal -> {
+                if (speed >= FAST_ENTER_MPS && intervalMs > FAST_INTERVAL_MS) applyMode(Mode.Fast)
+                else detectStill(toSave)
+            }
+            Mode.Fast -> {
+                // 느려진 상태가 2분 넘게 이어지면 원래 주기로 (신호 대기 등으로 잠깐 멈춘 건 무시)
+                if (speed < FAST_EXIT_MPS) {
+                    if (slowSince == 0L) slowSince = newest.time
+                    if (newest.time - slowSince >= FAST_EXIT_AFTER_MS) applyMode(Mode.Normal)
+                } else {
+                    slowSince = 0L
+                }
+            }
             Mode.Still -> {}
         }
+    }
+
+    private var lastSavedLocation: Location? = null
+
+    /** 이번에 받은 위치들의 속도(m/s). GPS가 준 속도가 있으면 그것을, 없으면 위치 변화로 계산 */
+    private fun estimateSpeed(prev: Location?, added: List<Location>): Float {
+        val newest = added.last()
+        if (newest.hasSpeed() && (!newest.hasSpeedAccuracy() || newest.speedAccuracyMetersPerSecond < 3f)) return newest.speed
+        val from = if (added.size >= 2) added[added.size - 2] else prev ?: return 0f
+        val dt = (newest.time - from.time) / 1000f
+        if (dt <= 0f) return 0f
+        val dist = from.distanceTo(newest) - maxOf(from.accuracy, newest.accuracy)
+        return (dist / dt).coerceAtLeast(0f)
     }
 
     /** 최근 5분 이상 위치가 반경 25m(또는 오차) 안에만 있었다면 정지로 보고 위치 업데이트를 끈다 */
@@ -288,15 +346,43 @@ class TrackingService : LifecycleService() {
         }
     }
 
-    /** 움직이는 중인데 (주기 × 3 + 여유) 동안 쓸 만한 위치가 없으면 10초 재시도로 바꾼다 */
+    /**
+     * 움직이는 중인데 (주기 × 3 + 여유) 동안 쓸 만한 위치가 없으면 재시도 모드로 바꾸고,
+     * 재시도가 길어지면 간격을 점점 늘린다.
+     */
     private fun checkOverdue() {
-        if (mode != Mode.Normal) return
+        if (mode == Mode.Still) return
         if (!isLocationEnabled()) {
             setPhase(Phase.LocationOff)
             return
         }
-        val waited = System.currentTimeMillis() - maxOf(lastAcceptedAt, modeSince)
-        if (waited > intervalMs * 3 + 15_000L) applyMode(Mode.Retry)
+        val now = System.currentTimeMillis()
+        when (mode) {
+            Mode.Normal, Mode.Fast -> {
+                val expected = if (mode == Mode.Fast) FAST_BATCH_MS else intervalMs * 2
+                val waited = now - maxOf(lastAcceptedAt, modeSince)
+                if (waited > expected + intervalFor(mode) + 15_000L) applyMode(Mode.Retry)
+            }
+            Mode.Retry -> {
+                val next = retryIntervalFor(now - retryStartedAt)
+                if (next != retryIntervalMs) {
+                    retryIntervalMs = next
+                    applyMode(Mode.Retry)
+                }
+            }
+            Mode.Still -> {}
+        }
+    }
+
+    private fun intervalFor(m: Mode) = if (m == Mode.Fast) FAST_INTERVAL_MS else intervalMs
+
+    /** 신호 없는 상태가 이어진 시간에 따른 재시도 간격. 오래 갇혀 있어도 최대 15분 간격이라 배터리를 거의 쓰지 않는다. */
+    private fun retryIntervalFor(elapsedMs: Long): Long = when {
+        elapsedMs < 3 * 60_000L -> RETRY_INTERVAL_MS        // 처음 3분: 10초
+        elapsedMs < 10 * 60_000L -> 30_000L                  // ~10분: 30초
+        elapsedMs < 30 * 60_000L -> 60_000L                  // ~30분: 1분
+        elapsedMs < 60 * 60_000L -> 5 * 60_000L              // ~1시간: 5분
+        else -> RETRY_MAX_INTERVAL_MS                        // 그 뒤로: 15분
     }
 
     // ── 정지/이동 감지 ───────────────────────────────────────
@@ -354,8 +440,9 @@ class TrackingService : LifecycleService() {
         val last = s.lastFixAt?.let { " · 마지막 ${timeFmt.format(Date(it))}" } ?: ""
         return when (s.phase) {
             Phase.Moving -> "기록 중$last"
+            Phase.MovingFast -> "빠르게 이동 중 · 15초마다 기록$last"
             Phase.Still -> "머무는 중 · 위치 업데이트 쉬는 중$last"
-            Phase.Searching -> "위치 신호 찾는 중 · 10초마다 시도$last"
+            Phase.Searching -> "위치 신호 찾는 중 · ${retryLabel(s.retryIntervalMs)}마다 시도$last"
             Phase.LocationOff -> "휴대폰 위치 설정이 꺼져 있어요"
             Phase.Idle -> "기록 준비 중"
         }
@@ -412,8 +499,20 @@ class TrackingService : LifecycleService() {
         private const val NOTIFICATION_ID = 1
         private const val RESUME_NOTIFICATION_ID = 2
 
-        /** 신호를 잃었을 때 재시도 간격 */
+        /** 신호를 잃었을 때 처음 재시도 간격과 최대 간격 */
         const val RETRY_INTERVAL_MS = 10_000L
+        const val RETRY_MAX_INTERVAL_MS = 15 * 60_000L
+        /** 빠른 이동: 시속 30km 이상이면 15초마다, 시속 20km 아래로 2분 넘게 내려가면 원래대로 */
+        const val FAST_INTERVAL_MS = 15_000L
+        const val FAST_BATCH_MS = 60_000L
+        const val FAST_ENTER_MPS = 30f / 3.6f
+        const val FAST_EXIT_MPS = 20f / 3.6f
+        const val FAST_EXIT_AFTER_MS = 2 * 60_000L
+
+        fun retryLabel(ms: Long?): String = when {
+            ms == null || ms < 60_000L -> "${(ms ?: RETRY_INTERVAL_MS) / 1000}초"
+            else -> "${ms / 60_000L}분"
+        }
         /** 정지인데 깨워 줄 센서가 없는 휴대폰에서만 쓰는 확인 간격 */
         const val STILL_INTERVAL_MS = 15 * 60_000L
         /** 이 시간 동안 이 반경 안에만 있으면 정지로 본다 */
