@@ -34,7 +34,6 @@ android {
 
     signingConfigs {
         // GitHub Actions: 저장소 Secret의 키를 DOT_KEYSTORE 경로로 풀어 두면 그 키로 서명한다.
-        // (Dot 앱과 같은 키를 쓰면 SHA-1도 같다)
         getByName("debug") {
             System.getenv("DOT_KEYSTORE")?.takeIf { it.isNotBlank() }?.let { path ->
                 storeFile = file(path)
