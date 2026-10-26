@@ -64,6 +64,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.dot.trace.BuildConfig
 import com.dot.trace.R
 import com.dot.trace.data.PointEntity
 import com.dot.trace.tracking.Phase
@@ -250,6 +251,26 @@ fun MapScreen(
                     onClick = { true },
                 )
             } }
+        }
+
+        if (!BuildConfig.HAS_MAPS_KEY) {
+            // 구글 지도 키 없이 빌드하면 지도가 빈 화면으로 멈춰 있다 → 이유를 알려 준다
+            Surface(
+                modifier = Modifier.align(Alignment.Center).padding(24.dp),
+                shape = RoundedCornerShape(20.dp),
+                color = Dot.Surface,
+            ) {
+                Column(Modifier.padding(20.dp)) {
+                    Text("지도 키가 없어요", style = MaterialTheme.typography.titleMedium, color = Dot.Text, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        "이 APK는 구글 지도 API 키 없이 빌드돼서 지도를 그릴 수 없어요. 위치 기록은 정상이에요.\n\n" +
+                            "GitHub 저장소 Secrets에 MAPS_API_KEY와 DEBUG_KEYSTORE_BASE64를 넣고 다시 빌드해 주세요.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Dot.Muted,
+                    )
+                }
+            }
         }
 
         // 위: 날짜 선택 + 설정

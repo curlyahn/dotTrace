@@ -28,6 +28,8 @@ android {
         versionCode = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1
         versionName = "0.1"
         manifestPlaceholders["MAPS_API_KEY"] = mapsApiKey
+        // 지도 키 없이 빌드했는지 화면에서 알려 주기 위해
+        buildConfigField("boolean", "HAS_MAPS_KEY", if (mapsApiKey.isBlank()) "false" else "true")
     }
 
     signingConfigs {
@@ -60,6 +62,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 
