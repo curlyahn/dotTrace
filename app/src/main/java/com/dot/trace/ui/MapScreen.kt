@@ -107,6 +107,7 @@ fun MapScreen(
     // '내 위치' 버튼으로 잡은 현재 위치 (기록과 별개로 지도에만 표시)
     var me by remember { mutableStateOf<android.location.Location?>(null) }
     var locating by remember { mutableStateOf(false) }
+    val controller = remember { MapController() }
     var meNote by remember { mutableStateOf<String?>(null) }
     var noteSeq by remember { mutableIntStateOf(0) }
     val haptic = LocalHapticFeedback.current
@@ -166,7 +167,6 @@ fun MapScreen(
     var mapLoaded by remember { mutableStateOf(false) }
     var fittedFor by remember { mutableStateOf<LocalDate?>(null) }
 
-    val controller = remember { MapController() }
     with(density) {
         controller.paddingTop = (WindowInsets.statusBars.getTop(this) + 84.dp.roundToPx())
         controller.paddingBottom = (WindowInsets.navigationBars.getBottom(this) + (if (moves.isEmpty()) 280.dp else 350.dp).roundToPx())
