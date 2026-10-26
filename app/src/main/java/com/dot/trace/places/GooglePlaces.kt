@@ -101,8 +101,8 @@ object GooglePlaces {
         val err = lastError
         val key = BuildConfig.MAPS_API_KEY
         val head = "키 ${key.take(6)}…${key.takeLast(4)} · 앱 SHA-1 ${signingSha1(context)?.chunked(2)?.joinToString(":") ?: "?"}\n"
-        return head + when {
-            found != null -> "정상: '${found.name}'을(를) 찾았어요"
+        val places = when {
+            found != null -> "장소: 정상 ('${found.name}')"
             err == null -> "연결은 됐지만 근처 장소가 없어요"
             "API_KEY_ANDROID_APP_BLOCKED" in err || "Android client application" in err ->
                 "키의 Android 앱 제한(패키지 com.dot.trace / SHA-1)이 맞지 않아요\n$err"
@@ -112,6 +112,24 @@ object GooglePlaces {
             "BILLING" in err -> "프로젝트에 결제 계정이 연결되지 않았어요\n$err"
             else -> "오류: $err"
         }
+        return head + places + "\n" + mapsSdkLog()
+    }
+
+    /**
+     * Google 지도 SDK가 이 앱 로그에 남긴 인증 오류 (지도 그림이 안 나올 때 원인).
+     * 앱은 자기 프로세스의 로그만 읽을 수 있다.
+     */
+    private suspend fun mapsSdkLog(): String = withContext(Dispatchers.IO) {
+        runCatching {
+            val p = Runtime.getRuntime().exec(arrayOf("logcat", "-d", "-v", "brief", "--pid=${android.os.Process.myPid()}"))
+            val lines = p.inputStream.bufferedReader().use { it.readLines() }
+            p.destroy()
+            val maps = lines.filter { "Maps" in it || "maps" in it }
+                .filter { "Authorization" in it || "API Key" in it || "Ensure" in it || "Android Application" in it || "failure" in it || "error" in it.lowercase() }
+                .takeLast(8)
+            if (maps.isEmpty()) "지도: 인증 오류 기록 없음 (지도 화면을 한 번 연 뒤 다시 확인해 보세요)"
+            else "지도 SDK 오류:\n" + maps.joinToString("\n") { it.substringAfter("): ").take(240) }
+        }.getOrElse { "지도: 로그를 읽지 못했어요 (${it.message})" }
     }
 
     /** 앱 서명 인증서 SHA-1 (콜론 없이 대문자 16진수) */

@@ -209,7 +209,7 @@ fun SettingsScreen(
                 Text(
                     testResult ?: "지도나 장소 이름이 안 보일 때 눌러 보세요. API 키 설정 문제를 알려 줘요.",
                     style = MaterialTheme.typography.bodySmall,
-                    color = if (testResult?.startsWith("정상") == true || testResult?.contains("\n정상") == true) Dot.Lime else Dot.Muted,
+                    color = Dot.Muted,
                 )
             }
             Icon(Icons.AutoMirrored.Rounded.KeyboardArrowRight, contentDescription = null, tint = Dot.Faint)
