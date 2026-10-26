@@ -164,6 +164,7 @@ fun MapScreen(
 
     var selected by remember { mutableStateOf<PointEntity?>(null) }
     var showPicker by remember { mutableStateOf(false) }
+    var showPoints by remember { mutableStateOf(false) }
     var mapLoaded by remember { mutableStateOf(false) }
     var fittedFor by remember { mutableStateOf<LocalDate?>(null) }
 
@@ -280,10 +281,25 @@ fun MapScreen(
                     selectedTrip = if (selectedTrip == t) null else t
                     fit(if (selectedTrip == null) points else t.points)
                 },
+                onShowPoints = { if (points.isNotEmpty()) showPoints = true },
                 onStart = onStart,
                 onStop = onStop,
             )
         }
+    }
+
+    if (showPoints) {
+        PointsSheet(
+            points = points,
+            modeOfPoint = modeOfPoint,
+            onDismiss = { showPoints = false },
+            onPick = { p ->
+                showPoints = false
+                selectedTrip = null
+                selected = p
+                controller.focus(p)
+            },
+        )
     }
 
     if (showPicker) {
@@ -404,6 +420,7 @@ private fun StatusCard(
     trips: List<Segment>,
     selectedTrip: Segment?,
     onSelectTrip: (Segment) -> Unit,
+    onShowPoints: () -> Unit,
     onStart: () -> Unit,
     onStop: () -> Unit,
 ) {
@@ -442,6 +459,9 @@ private fun StatusCard(
                 ) {
                     Column(Modifier.weight(1f)) {
                         Text(secFmt.format(Date(selected.time)), style = MaterialTheme.typography.titleMedium, color = Dot.Text, fontWeight = FontWeight.SemiBold)
+                        rememberAddress(selected.lat, selected.lng)?.let {
+                            Text(it, style = MaterialTheme.typography.bodySmall, color = Dot.Text, maxLines = 2)
+                        }
                         Text(
                             buildString {
                                 append("%.5f, %.5f".format(Locale.US, selected.lat, selected.lng))
@@ -458,8 +478,22 @@ private fun StatusCard(
                 }
             } else {
                 Row(verticalAlignment = Alignment.Bottom) {
-                    Text("$pointCount", style = MaterialTheme.typography.displaySmall, color = Dot.Text)
-                    Text(" 지점", style = MaterialTheme.typography.titleMedium, color = Dot.Muted, modifier = Modifier.padding(bottom = 6.dp))
+                    // 지점 수를 누르면 어디였는지 목록으로
+                    Row(
+                        Modifier.clip(RoundedCornerShape(12.dp)).clickable(enabled = pointCount > 0, onClick = onShowPoints),
+                        verticalAlignment = Alignment.Bottom,
+                    ) {
+                        Text("$pointCount", style = MaterialTheme.typography.displaySmall, color = Dot.Text)
+                        Text(" 지점", style = MaterialTheme.typography.titleMedium, color = Dot.Muted, modifier = Modifier.padding(bottom = 6.dp))
+                        if (pointCount > 0) {
+                            Icon(
+                                Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                                contentDescription = "지점 목록 보기",
+                                tint = Dot.Muted,
+                                modifier = Modifier.padding(bottom = 6.dp).size(20.dp),
+                            )
+                        }
+                    }
                     Spacer(Modifier.width(18.dp))
                     Text("%.1f".format(Locale.US, distanceKm), style = MaterialTheme.typography.displaySmall, color = Dot.Text)
                     Text(" km", style = MaterialTheme.typography.titleMedium, color = Dot.Muted, modifier = Modifier.padding(bottom = 6.dp))
