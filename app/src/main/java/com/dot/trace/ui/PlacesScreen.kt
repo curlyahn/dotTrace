@@ -34,6 +34,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.MyLocation
 import androidx.compose.material.icons.rounded.Place
@@ -76,6 +77,8 @@ fun PlacesScreen(vm: MainViewModel, onBack: () -> Unit, onEdit: (kind: String, i
     val home = places.firstOrNull { it.kind == PlaceEntity.HOME }
     val work = places.firstOrNull { it.kind == PlaceEntity.WORK }
     val favs = places.filter { it.kind == PlaceEntity.FAV }
+    val labels = places.filter { it.kind == PlaceEntity.LABEL }
+    val rules by vm.rules.collectAsStateWithLifecycle()
 
     Column(
         Modifier.fillMaxSize().background(Dot.Ink).statusBarsPadding().navigationBarsPadding()
@@ -110,7 +113,31 @@ fun PlacesScreen(vm: MainViewModel, onBack: () -> Unit, onEdit: (kind: String, i
                 Text("자주 가는 곳 추가", style = MaterialTheme.typography.titleMedium, color = Dot.Text)
             }
         }
+        if (labels.isNotEmpty()) {
+            PlaceSection("타임라인에서 기억한 이름 ${labels.size}")
+            labels.forEach { l -> RemovableRow(l.name, rememberAddress(l.lat, l.lng) ?: "") { vm.deletePlace(l.id) } }
+        }
+        if (rules.isNotEmpty()) {
+            PlaceSection("기억한 이동 수단 ${rules.size}")
+            rules.forEach { r ->
+                val mode = runCatching { com.dot.trace.trips.TransportMode.valueOf(r.mode) }.getOrNull()
+                val from = rememberAddress(r.startLat, r.startLng) ?: "출발지"
+                val to = rememberAddress(r.endLat, r.endLng) ?: "도착지"
+                RemovableRow(mode?.label ?: r.mode, "$from → $to") { vm.deleteRule(r.id) }
+            }
+        }
         Spacer(Modifier.height(32.dp))
+    }
+}
+
+@Composable
+private fun RemovableRow(title: String, body: String, onRemove: () -> Unit) {
+    Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.titleMedium, color = Dot.Text)
+            if (body.isNotEmpty()) Text(body, style = MaterialTheme.typography.bodySmall, color = Dot.Muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        }
+        IconButton(onClick = onRemove) { Icon(Icons.Rounded.Close, "지우기", tint = Dot.Faint) }
     }
 }
 

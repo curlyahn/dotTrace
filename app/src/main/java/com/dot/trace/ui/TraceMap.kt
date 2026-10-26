@@ -107,6 +107,11 @@ fun TraceMap(
     places: List<com.dot.trace.data.PlaceEntity> = emptyList(),
     /** 지도 이동이 멈췄을 때 가운데 좌표 */
     onCameraIdle: ((LatLng) -> Unit)? = null,
+    /** 머문 곳: 점 여러 개 대신 원 하나 + 이름·머문 시간 */
+    stays: List<Segment> = emptyList(),
+    onStayClick: ((Segment) -> Unit)? = null,
+    /** 이름 없는 머문 곳 근처에서 지도 데이터의 상호·건물 이름을 찾았을 때 */
+    onPoiFound: ((Double, Double, String) -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
@@ -114,6 +119,11 @@ fun TraceMap(
     val currentOnClick by rememberUpdatedState(onPointClick)
     val currentOnReady by rememberUpdatedState(onReady)
     val currentOnIdle by rememberUpdatedState(onCameraIdle)
+    val currentStays by rememberUpdatedState(stays)
+    val currentOnStay by rememberUpdatedState(onStayClick)
+    val currentOnPoi by rememberUpdatedState(onPoiFound)
+    // 이번 화면에서 이미 상호 이름을 찾아본 머문 곳 (같은 곳을 반복해서 찾지 않게)
+    val poiTried = remember { HashSet<String>() }
     var style by remember { mutableStateOf<Style?>(null) }
     var mapRef by remember { mutableStateOf<MapLibreMap?>(null) }
 
@@ -159,12 +169,22 @@ fun TraceMap(
             map.addOnMapClickListener { ll ->
                 val sp = map.projection.toScreenLocation(ll)
                 val r = 18f * context.resources.displayMetrics.density
+                // 머문 곳 원을 눌렀으면 그 머무름
+                val stayHit = map.queryRenderedFeatures(RectF(sp.x - r, sp.y - r, sp.x + r, sp.y + r), "trace-stays")
+                    .firstOrNull()?.getNumberProperty("start")?.toLong()
+                if (stayHit != null) {
+                    currentStays.firstOrNull { it.start == stayHit }?.let { st -> currentOnStay?.invoke(st) }
+                    return@addOnMapClickListener true
+                }
                 val hits = map.queryRenderedFeatures(RectF(sp.x - r, sp.y - r, sp.x + r, sp.y + r), "trace-head", "trace-dots")
                 val id = hits.firstOrNull()?.getNumberProperty("id")?.toLong()
                 currentOnClick(id?.let { pid -> currentPoints.firstOrNull { it.id == pid } })
                 id != null
             }
-            map.addOnCameraIdleListener { map.cameraPosition.target?.let { t -> currentOnIdle?.invoke(t) } }
+            map.addOnCameraIdleListener {
+                map.cameraPosition.target?.let { t -> currentOnIdle?.invoke(t) }
+                findPoiNames(map, currentStays, poiTried, context.resources.displayMetrics.density) { lat, lng, n -> currentOnPoi?.invoke(lat, lng, n) }
+            }
             mapRef = map
         }
     }
@@ -192,8 +212,17 @@ fun TraceMap(
     }
 
     // 데이터가 바뀌면 지도 위 선·점만 다시 그린다
-    LaunchedEffect(style, points, dots, moves, modeOfPoint, selectedTrip, selected, me, places) {
+    LaunchedEffect(style, points, dots, moves, modeOfPoint, selectedTrip, selected, me, places, stays) {
         val s = style ?: return@LaunchedEffect
+        s.getSourceAs<GeoJsonSource>(SRC_STAYS)?.setGeoJson(
+            FeatureCollection.fromFeatures(stays.map { st ->
+                Feature.fromGeometry(Point.fromLngLat(st.lng, st.lat)).apply {
+                    addNumberProperty("start", st.start)
+                    addStringProperty("label", listOfNotNull(st.name, stayDuration(st.durationMs)).joinToString("\n"))
+                    addStringProperty("color", if (st.placeKind != null) hex(Dot.Lime) else "#FFFFFF")
+                }
+            })
+        )
         s.getSourceAs<GeoJsonSource>(SRC_PLACES)?.setGeoJson(
             FeatureCollection.fromFeatures(places.map { p ->
                 Feature.fromGeometry(Point.fromLngLat(p.lng, p.lat)).apply { addStringProperty("name", p.name) }
@@ -223,11 +252,12 @@ private const val SRC_HEAD = "trace-head-src"
 private const val SRC_SEL = "trace-sel-src"
 private const val SRC_ME = "trace-me-src"
 private const val SRC_PLACES = "trace-places-src"
+private const val SRC_STAYS = "trace-stays-src"
 
 private fun hex(c: Color) = String.format("#%06X", c.toArgb() and 0xFFFFFF)
 
 private fun addTraceLayers(s: Style) {
-    listOf(SRC_PLACES, SRC_BASE, SRC_SEG, SRC_DOTS, SRC_HEAD, SRC_SEL, SRC_ME).forEach { s.addSource(GeoJsonSource(it)) }
+    listOf(SRC_PLACES, SRC_BASE, SRC_SEG, SRC_STAYS, SRC_DOTS, SRC_HEAD, SRC_SEL, SRC_ME).forEach { s.addSource(GeoJsonSource(it)) }
 
     // 내 장소: 경로 아래에 이름표와 함께
     s.addLayer(CircleLayer("trace-places", SRC_PLACES).withProperties(
@@ -269,6 +299,25 @@ private fun addTraceLayers(s: Style) {
         PropertyFactory.lineWidth(Expression.get("width")),
         PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
         PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
+    ))
+    // 머문 곳: 원 하나 + 이름·머문 시간
+    s.addLayer(CircleLayer("trace-stays", SRC_STAYS).withProperties(
+        PropertyFactory.circleColor(Expression.get("color")),
+        PropertyFactory.circleRadius(11f),
+        PropertyFactory.circleStrokeColor(hex(Dot.Ink)),
+        PropertyFactory.circleStrokeWidth(3f),
+    ))
+    s.addLayer(SymbolLayer("trace-stays-label", SRC_STAYS).withProperties(
+        PropertyFactory.textField(Expression.get("label")),
+        PropertyFactory.textFont(arrayOf("Noto Sans Bold", "Noto Sans Regular")),
+        PropertyFactory.textSize(12f),
+        PropertyFactory.textColor(hex(Dot.Ink)),
+        PropertyFactory.textHaloColor("#FFFFFF"),
+        PropertyFactory.textHaloWidth(2f),
+        PropertyFactory.textOffset(arrayOf(0f, 1.3f)),
+        PropertyFactory.textAnchor(Property.TEXT_ANCHOR_TOP),
+        PropertyFactory.textAllowOverlap(false),
+        PropertyFactory.textOptional(true),
     ))
     // 기록 지점
     s.addLayer(CircleLayer("trace-dots", SRC_DOTS).withProperties(
@@ -349,3 +398,50 @@ private fun dotFeatures(dots: List<PointEntity>, modeOfPoint: Map<Long, Transpor
 
 private fun pointFeature(p: PointEntity): Feature =
     Feature.fromGeometry(Point.fromLngLat(p.lng, p.lat)).apply { addNumberProperty("id", p.id) }
+
+private fun stayDuration(ms: Long): String {
+    val min = ms / 60_000
+    val h = min / 60
+    return when {
+        h >= 1 && min % 60 == 0L -> "${h}시간"
+        h >= 1 -> "${h}시간 ${min % 60}분"
+        else -> "${min}분"
+    }
+}
+
+/**
+ * 이름 없는 머문 곳 근처에서 지도 데이터(OpenStreetMap)의 상호·건물 이름을 찾는다.
+ * 서버에 묻지 않고, 지금 화면에 그려진 지도 안에서만 찾는다.
+ */
+private fun findPoiNames(
+    map: MapLibreMap,
+    stays: List<Segment>,
+    tried: HashSet<String>,
+    density: Float,
+    onFound: (Double, Double, String) -> Unit,
+) {
+    if (map.cameraPosition.zoom < 14.0) return // 너무 멀리서 보면 상호가 그려지지 않는다
+    val visible = map.projection.visibleRegion.latLngBounds
+    val r = 48f * density
+    for (st in stays) {
+        if (st.name != null) continue
+        val key = com.dot.trace.trips.DayAnalyzer.poiKey(st.lat, st.lng)
+        if (key in tried) continue
+        if (!visible.contains(LatLng(st.lat, st.lng))) continue
+        tried += key
+        val sp = map.projection.toScreenLocation(LatLng(st.lat, st.lng))
+        val best = map.queryRenderedFeatures(RectF(sp.x - r, sp.y - r, sp.x + r, sp.y + r))
+            .asSequence()
+            .filter { it.hasProperty("class") && (it.hasProperty("name:ko") || it.hasProperty("name")) }
+            .mapNotNull { f ->
+                val g = f.geometry() as? Point ?: return@mapNotNull null
+                val name = (if (f.hasProperty("name:ko")) f.getStringProperty("name:ko") else null)
+                    ?: f.getStringProperty("name") ?: return@mapNotNull null
+                val d = com.dot.trace.data.Geo.distance(st.lat, st.lng, g.latitude(), g.longitude())
+                Triple(name, d, g)
+            }
+            .filter { it.second <= com.dot.trace.trips.DayAnalyzer.POI_RADIUS_M }
+            .minByOrNull { it.second }
+        if (best != null) onFound(st.lat, st.lng, best.first)
+    }
+}

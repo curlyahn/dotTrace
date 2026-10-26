@@ -44,7 +44,21 @@ data class Segment(
     val start: Long,
     val end: Long,
     val distanceM: Double,
-)
+    /** 머문 곳은 가운데, 이동은 출발 위치 */
+    val lat: Double = if (stay) points.map { it.lat }.average() else points.first().lat,
+    val lng: Double = if (stay) points.map { it.lng }.average() else points.first().lng,
+    /** 이동의 도착 위치 (머문 곳은 lat/lng와 같음) */
+    val endLat: Double = if (stay) lat else points.last().lat,
+    val endLng: Double = if (stay) lng else points.last().lng,
+    /** 머문 곳 이름 (직접 고친 이름 > 내 장소 > 지도 상호), 모르면 null → 화면에서 주소로 */
+    val name: String? = null,
+    /** 사용자가 직접 고친 구간인지 */
+    val edited: Boolean = false,
+    /** 내 장소(집·회사 등)의 종류, 아니면 null */
+    val placeKind: String? = null,
+) {
+    val durationMs: Long get() = end - start
+}
 
 /**
  * 기록된 위치들로 이동 수단을 추정한다. 모두 기기 안에서 계산한다.

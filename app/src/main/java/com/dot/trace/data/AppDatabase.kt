@@ -105,6 +105,8 @@ data class PlaceEntity(
         const val HOME = "home"
         const val WORK = "work"
         const val FAV = "fav"
+        /** 타임라인에서 고친 머문 곳 이름 (다음에도 같은 곳에 이 이름을 붙임) */
+        const val LABEL = "label"
         const val MAX_FAVORITES = 10
     }
 }
@@ -130,17 +132,108 @@ interface PlaceDao {
     suspend fun delete(id: Long)
 }
 
-@Database(entities = [PointEntity::class, PlaceEntity::class], version = 4, exportSchema = false)
+/** 사용자가 고친 내용: 이 시간대 구간의 이동 수단 또는 머문 곳 이름 */
+@Entity(tableName = "overrides", indices = [Index("start")])
+data class OverrideEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val start: Long,
+    val end: Long,
+    /** TransportMode 이름 (이동 구간), 없으면 null */
+    val mode: String? = null,
+    /** 머문 곳 이름, 없으면 null */
+    val name: String? = null,
+)
+
+/** 학습한 규칙: 이 출발지 → 도착지 이동은 이 수단 */
+@Entity(tableName = "mode_rules")
+data class ModeRuleEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val startLat: Double,
+    val startLng: Double,
+    val endLat: Double,
+    val endLng: Double,
+    val mode: String,
+)
+
+/** 지도 데이터에서 찾은 근처 상호·건물 이름 (서버에 묻지 않고 지도 그림 안에서 찾음) */
+@Entity(tableName = "poi_names")
+data class PoiNameEntity(
+    @PrimaryKey val key: String,
+    val lat: Double,
+    val lng: Double,
+    val name: String,
+)
+
+/** 하루 분석 결과 저장 (기록이 바뀌지 않았으면 다시 분석하지 않음 → 리포트가 빨라짐) */
+@Entity(tableName = "day_cache")
+data class DayCacheEntity(
+    @PrimaryKey val day: String,
+    val pointCount: Int,
+    val lastTime: Long,
+    val data: String,
+)
+
+@Dao
+interface AnalysisDao {
+    @Query("SELECT * FROM overrides ORDER BY start")
+    fun observeOverrides(): Flow<List<OverrideEntity>>
+
+    @Query("SELECT * FROM overrides WHERE `end` > :from AND start < :to")
+    suspend fun overridesBetween(from: Long, to: Long): List<OverrideEntity>
+
+    @Query("DELETE FROM overrides WHERE `end` > :from AND start < :to")
+    suspend fun deleteOverridesBetween(from: Long, to: Long)
+
+    @Insert
+    suspend fun insertOverride(o: OverrideEntity): Long
+
+    @Query("SELECT * FROM mode_rules")
+    fun observeRules(): Flow<List<ModeRuleEntity>>
+
+    @Query("SELECT * FROM mode_rules")
+    suspend fun rules(): List<ModeRuleEntity>
+
+    @Insert
+    suspend fun insertRule(r: ModeRuleEntity): Long
+
+    @Query("DELETE FROM mode_rules WHERE id = :id")
+    suspend fun deleteRule(id: Long)
+
+    @Query("SELECT * FROM poi_names")
+    fun observePoi(): Flow<List<PoiNameEntity>>
+
+    @Query("SELECT * FROM poi_names")
+    suspend fun poi(): List<PoiNameEntity>
+
+    @Insert(onConflict = androidx.room.OnConflictStrategy.REPLACE)
+    suspend fun putPoi(p: PoiNameEntity)
+
+    @Query("SELECT * FROM day_cache WHERE day = :day")
+    suspend fun cached(day: String): DayCacheEntity?
+
+    @Insert(onConflict = androidx.room.OnConflictStrategy.REPLACE)
+    suspend fun putCache(c: DayCacheEntity)
+
+    @Query("DELETE FROM day_cache")
+    suspend fun clearCache()
+}
+
+@Database(
+    entities = [PointEntity::class, PlaceEntity::class, OverrideEntity::class, ModeRuleEntity::class, PoiNameEntity::class, DayCacheEntity::class],
+    version = 5,
+    exportSchema = false,
+)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun points(): PointDao
     abstract fun places(): PlaceDao
+    abstract fun analysis(): AnalysisDao
 
     companion object {
         @Volatile private var instance: AppDatabase? = null
 
         fun get(context: Context): AppDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(context.applicationContext, AppDatabase::class.java, "dottrace.db")
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
                 .build()
                 .also { instance = it }
         }
@@ -170,6 +263,29 @@ abstract class AppDatabase : RoomDatabase() {
         private val MIGRATION_3_4 = object : Migration(3, 4) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE points ADD COLUMN source INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        /** 정리 결과 저장, 사용자 수정, 학습 규칙, 지도 상호 이름 */
+        private val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS overrides (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "start INTEGER NOT NULL, `end` INTEGER NOT NULL, mode TEXT, name TEXT)"
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_overrides_start ON overrides (start)")
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS mode_rules (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "startLat REAL NOT NULL, startLng REAL NOT NULL, endLat REAL NOT NULL, endLng REAL NOT NULL, mode TEXT NOT NULL)"
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS poi_names (`key` TEXT PRIMARY KEY NOT NULL, " +
+                        "lat REAL NOT NULL, lng REAL NOT NULL, name TEXT NOT NULL)"
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS day_cache (day TEXT PRIMARY KEY NOT NULL, " +
+                        "pointCount INTEGER NOT NULL, lastTime INTEGER NOT NULL, data TEXT NOT NULL)"
+                )
             }
         }
     }

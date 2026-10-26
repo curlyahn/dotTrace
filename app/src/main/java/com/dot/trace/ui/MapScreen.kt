@@ -31,6 +31,8 @@ import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.BarChart
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.Timeline
 import androidx.compose.material.icons.rounded.MyLocation
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material3.Button
@@ -108,6 +110,11 @@ fun MapScreen(
     val tripsState by vm.trips.collectAsStateWithLifecycle()
     val segments = if (tripsState.date == date) tripsState.segments else emptyList()
     val moves = remember(segments) { segments.filter { !it.stay } }
+    val stays = remember(segments) { segments.filter { it.stay } }
+    var selectedStay by remember { mutableStateOf<Segment?>(null) }
+    var showTimeline by remember { mutableStateOf(false) }
+    var editing by remember { mutableStateOf<Segment?>(null) }
+    val suggestion by vm.suggestion.collectAsStateWithLifecycle()
     var selectedTrip by remember { mutableStateOf<Segment?>(null) }
     val status by vm.status.collectAsStateWithLifecycle()
     val settings by vm.settings.collectAsStateWithLifecycle()
@@ -184,10 +191,14 @@ fun MapScreen(
     }
 
     // 머물러 있던 구간은 점이 겹치므로, 15m 이상 움직였을 때만 점을 하나씩 찍는다
-    val dots = remember(points) { thinOut(points, minDistanceM = 15f) }
+    // 머문 곳 안의 점(GPS 흔들림)은 숨기고 원 하나로 보여 준다 → 이동 중 점만 찍는다
+    val dots = remember(points, stays) {
+        val inStay = stays.flatMap { st -> st.points.map { it.id } }.toHashSet()
+        thinOut(points.filter { it.id !in inStay }, minDistanceM = 15f)
+    }
     val distanceKm = remember(points) { distanceKm(points) }
 
-    LaunchedEffect(date) { selected = null; selectedTrip = null }
+    LaunchedEffect(date) { selected = null; selectedTrip = null; selectedStay = null }
 
     // 각 위치가 어느 이동 수단 구간에 속하는지 (점 색칠용)
     val modeOfPoint = remember(moves) {
@@ -232,8 +243,12 @@ fun MapScreen(
             selected = selected,
             onPointClick = { p ->
                 selected = p
+                selectedStay = null
                 if (p == null) selectedTrip = null
             },
+            stays = stays,
+            onStayClick = { st -> selectedStay = st; selected = null; selectedTrip = null },
+            onPoiFound = { lat, lng, name -> vm.savePoi(lat, lng, name) },
             styleName = settings.mapStyle,
             places = places,
             me = me,
@@ -274,6 +289,25 @@ fun MapScreen(
             Spacer(Modifier.width(8.dp))
             RoundIconButton(onClick = onOpenSettings) {
                 Icon(Icons.Rounded.Settings, contentDescription = "설정", tint = Dot.Text)
+            }
+        }
+        suggestion?.let { sg ->
+            Spacer(Modifier.height(10.dp))
+            Surface(shape = RoundedCornerShape(18.dp), color = Dot.Surface.copy(alpha = 0.97f), shadowElevation = 6.dp) {
+                Column(Modifier.padding(start = 16.dp, end = 8.dp, top = 12.dp, bottom = 4.dp)) {
+                    Text(
+                        if (sg.kind == com.dot.trace.data.PlaceEntity.HOME) "최근 ${sg.days}일 밤을 보낸 곳이 있어요. '집'으로 등록할까요?"
+                        else "최근 평일 ${sg.days}일 낮에 머문 곳이 있어요. '회사'로 등록할까요?",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Dot.Text,
+                    )
+                    rememberAddress(sg.lat, sg.lng)?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = Dot.Muted, maxLines = 1) }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                        androidx.compose.material3.TextButton(onClick = { controller.focusAt(sg.lat, sg.lng) }) { Text("지도에서 보기", color = Dot.Muted) }
+                        androidx.compose.material3.TextButton(onClick = { vm.dismissSuggestion() }) { Text("아니요", color = Dot.Muted) }
+                        androidx.compose.material3.TextButton(onClick = { vm.acceptSuggestion() }) { Text("등록", color = Dot.Lime) }
+                    }
+                }
             }
         }
         pendingReport?.let { p ->
@@ -337,9 +371,50 @@ fun MapScreen(
                     fit(if (selectedTrip == null) points else t.points)
                 },
                 onShowPoints = { if (points.isNotEmpty()) showPoints = true },
+                onShowTimeline = { showTimeline = true },
+                selectedStay = selectedStay,
+                onClearStay = { selectedStay = null },
+                onEditStay = { editing = it },
                 onStart = onStart,
                 onStop = onStop,
             )
+        }
+    }
+
+    if (showTimeline) {
+        TimelineSheet(
+            segments = segments,
+            onDismiss = { showTimeline = false },
+            onPick = { seg ->
+                showTimeline = false
+                selected = null
+                if (seg.stay) {
+                    selectedTrip = null
+                    selectedStay = seg
+                    controller.focusAt(seg.lat, seg.lng)
+                } else {
+                    selectedStay = null
+                    selectedTrip = seg
+                    fit(seg.points)
+                }
+            },
+            onEdit = { editing = it },
+        )
+    }
+
+    editing?.let { seg ->
+        if (seg.stay) {
+            StayEditDialog(seg, onDismiss = { editing = null }) { name, rememberIt ->
+                vm.renameStay(seg, name, rememberIt)
+                editing = null
+                selectedStay = null
+            }
+        } else {
+            MoveEditDialog(seg, onDismiss = { editing = null }) { mode, learn ->
+                vm.changeMode(seg, mode, learn)
+                editing = null
+                selectedTrip = null
+            }
         }
     }
 
@@ -487,6 +562,10 @@ private fun StatusCard(
     selectedTrip: Segment?,
     onSelectTrip: (Segment) -> Unit,
     onShowPoints: () -> Unit,
+    onShowTimeline: () -> Unit,
+    selectedStay: Segment?,
+    onClearStay: () -> Unit,
+    onEditStay: (Segment) -> Unit,
     onStart: () -> Unit,
     onStop: () -> Unit,
 ) {
@@ -517,7 +596,29 @@ private fun StatusCard(
             }
             Spacer(Modifier.height(14.dp))
 
-            if (selected != null) {
+            if (selectedStay != null && selected == null) {
+                // 지도에서 머문 곳 원을 눌렀을 때
+                val st = selectedStay
+                val address = rememberAddress(st.lat, st.lng)
+                Row(
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Dot.Surface2)
+                        .border(1.dp, Dot.Line, RoundedCornerShape(14.dp)).padding(start = 14.dp, top = 6.dp, bottom = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(st.name ?: address ?: "머문 곳", style = MaterialTheme.typography.titleMedium, color = Dot.Text, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                        Text(
+                            "${timeFmt.format(Date(st.start))}–${timeFmt.format(Date(st.end))} · ${durationText(st.durationMs)}" +
+                                (if (st.name != null && address != null) "\n$address" else ""),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Dot.Muted,
+                            maxLines = 2,
+                        )
+                    }
+                    IconButton(onClick = { onEditStay(st) }) { Icon(Icons.Rounded.Edit, "이름 고치기", tint = Dot.Muted) }
+                    IconButton(onClick = onClearStay) { Icon(Icons.Rounded.Close, contentDescription = "닫기", tint = Dot.Muted) }
+                }
+            } else if (selected != null) {
                 Row(
                     Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Dot.Surface2)
                         .border(1.dp, Dot.Line, RoundedCornerShape(14.dp)).padding(start = 14.dp, top = 6.dp, bottom = 6.dp),
@@ -560,12 +661,27 @@ private fun StatusCard(
                             )
                         }
                     }
-                    Spacer(Modifier.width(18.dp))
+                    Spacer(Modifier.width(14.dp))
                     Text("%.1f".format(Locale.US, distanceKm), style = MaterialTheme.typography.displaySmall, color = Dot.Text)
                     Text(" km", style = MaterialTheme.typography.titleMedium, color = Dot.Muted, modifier = Modifier.padding(bottom = 6.dp))
+                    Spacer(Modifier.weight(1f))
+                    // 하루 타임라인 (머문 곳·이동 목록)
+                    Surface(
+                        onClick = onShowTimeline,
+                        enabled = pointCount > 0,
+                        shape = RoundedCornerShape(50),
+                        color = Dot.Surface2,
+                        modifier = Modifier.padding(bottom = 4.dp),
+                    ) {
+                        Row(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Rounded.Timeline, null, tint = if (pointCount > 0) Dot.Lime else Dot.Faint, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("타임라인", style = MaterialTheme.typography.labelLarge, color = if (pointCount > 0) Dot.Text else Dot.Faint)
+                        }
+                    }
                 }
             }
-            if (trips.isNotEmpty() && selected == null) {
+            if (trips.isNotEmpty() && selected == null && selectedStay == null) {
                 Spacer(Modifier.height(14.dp))
                 TripStrip(trips, selectedTrip, onSelectTrip)
             }

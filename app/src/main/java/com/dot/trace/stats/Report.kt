@@ -3,10 +3,11 @@ package com.dot.trace.stats
 import android.content.Context
 import com.dot.trace.data.Geo
 import com.dot.trace.data.PlaceEntity
-import com.dot.trace.data.PointDao
+import com.dot.trace.data.AppDatabase
 import com.dot.trace.data.match
 import com.dot.trace.trips.TransportMode
-import com.dot.trace.trips.TripClassifier
+import com.dot.trace.trips.DayAnalyzer
+import com.dot.trace.trips.DayStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.time.LocalDate
@@ -79,7 +80,7 @@ object ReportBuilder {
     /** 주소를 찾아볼 머문 곳 최대 개수 (오래 머문 순) */
     private const val GEOCODE_LIMIT = 40
 
-    suspend fun build(context: Context, dao: PointDao, places: List<PlaceEntity>, period: Period): Report =
+    suspend fun build(context: Context, db: AppDatabase, period: Period): Report =
         withContext(Dispatchers.Default) {
             val zone = ZoneId.systemDefault()
             val modeDist = HashMap<TransportMode, Double>()
@@ -89,24 +90,31 @@ object ReportBuilder {
             var points = 0
             var days = 0
 
-            // 하루씩 나눠 머무름·이동을 구한다 (한 번에 메모리에 너무 많이 올리지 않도록)
+            val store = DayStore(db)
+            val periodFrom = period.start.atStartOfDay(zone).toInstant().toEpochMilli()
+            val periodTo = period.endExclusive.atStartOfDay(zone).toInstant().toEpochMilli()
+            // 사용자가 고친 이동 수단·이름과 학습 규칙을 함께 반영
+            val corrections = store.corrections(periodFrom, periodTo)
+            val places = corrections.places
+
+            // 하루씩: 저장해 둔 분석 결과가 있으면 그것을 쓰고, 없으면 분석해서 저장
             var d = period.start
             val today = LocalDate.now(zone)
             while (d.isBefore(period.endExclusive) && !d.isAfter(today)) {
                 val from = d.atStartOfDay(zone).toInstant().toEpochMilli()
                 val to = d.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
-                val dayPoints = dao.between(from, to)
-                if (dayPoints.isNotEmpty()) {
+                val raw = store.segments(d)
+                if (raw.isNotEmpty()) {
                     days++
-                    points += dayPoints.size
-                    for (seg in TripClassifier.classify(dayPoints)) {
+                    points += db.points().countBetween(from, to)
+                    for (seg in DayAnalyzer.apply(raw, corrections)) {
                         val dur = seg.end - seg.start
                         if (seg.stay) {
-                            val lat = seg.points.map { it.lat }.average()
-                            val lng = seg.points.map { it.lng }.average()
+                            val lat = seg.lat
+                            val lng = seg.lng
                             val c = clusters.firstOrNull { Geo.distance(it.lat, it.lng, lat, lng) <= CLUSTER_RADIUS_M }
-                            if (c == null) clusters += Cluster(lat, lng, dur, 1, hashSetOf(d))
-                            else { c.stayMs += dur; c.visits++; c.days += d }
+                            if (c == null) clusters += Cluster(lat, lng, dur, 1, hashSetOf(d), seg.name)
+                            else { c.stayMs += dur; c.visits++; c.days += d; if (c.name == null) c.name = seg.name }
                         } else if (seg.mode != TransportMode.Unknown || seg.distanceM > 0) {
                             modeDist[seg.mode] = (modeDist[seg.mode] ?: 0.0) + seg.distanceM
                             modeTime[seg.mode] = (modeTime[seg.mode] ?: 0L) + dur
@@ -121,10 +129,11 @@ object ReportBuilder {
             val sorted = clusters.sortedByDescending { it.stayMs }
             val stays = sorted.mapIndexed { i, c ->
                 val place = places.match(c.lat, c.lng)
+                val poiName = c.name
                 val addr = if (i < GEOCODE_LIMIT) Geo.address(context, c.lat, c.lng) else null
                 StayPlace(
                     lat = c.lat, lng = c.lng, stayMs = c.stayMs, visits = c.visits, days = c.days.size,
-                    placeName = place?.name,
+                    placeName = place?.name ?: poiName,
                     address = addr?.let { Geo.line(it) },
                     region = addr?.let { Geo.region(it) },
                 )
@@ -150,5 +159,5 @@ object ReportBuilder {
             )
         }
 
-    private class Cluster(val lat: Double, val lng: Double, var stayMs: Long, var visits: Int, val days: HashSet<LocalDate>)
+    private class Cluster(val lat: Double, val lng: Double, var stayMs: Long, var visits: Int, val days: HashSet<LocalDate>, var name: String?)
 }

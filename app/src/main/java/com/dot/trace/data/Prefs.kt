@@ -43,6 +43,7 @@ class Prefs(context: Context) {
         val mapStyle = androidx.datastore.preferences.core.stringPreferencesKey("map_style")
         val reportSeen = androidx.datastore.preferences.core.stringPreferencesKey("report_seen")
         val reportNotified = androidx.datastore.preferences.core.stringPreferencesKey("report_notified")
+        val suggestDismissed = androidx.datastore.preferences.core.stringPreferencesKey("suggest_dismissed")
     }
 
     val settings: Flow<Settings> = ds.data.map { p ->
@@ -64,6 +65,13 @@ class Prefs(context: Context) {
     /** 마지막으로 열어 본 리포트 기간 (예: M2026-10) — 앱 안 '리포트 준비됨' 안내를 한 번만 보여 주려고 */
     suspend fun reportSeen(): String? = ds.data.first()[K.reportSeen]
     suspend fun setReportSeen(key: String) = ds.edit { it[K.reportSeen] = key }
+
+    /** '집·회사로 등록할까요?' 제안을 닫은 위치들 (같은 제안을 다시 하지 않으려고) */
+    suspend fun suggestDismissed(): Set<String> = ds.data.first()[K.suggestDismissed]?.split(';')?.filter { it.isNotBlank() }?.toSet() ?: emptySet()
+    suspend fun addSuggestDismissed(key: String) = ds.edit {
+        val set = (it[K.suggestDismissed]?.split(';')?.filter { s -> s.isNotBlank() }?.toSet() ?: emptySet()) + key
+        it[K.suggestDismissed] = set.toList().takeLast(20).joinToString(";")
+    }
 
     /** 마지막으로 알림을 보낸 리포트 기간들 (쉼표로 구분) */
     suspend fun reportNotified(): Set<String> = ds.data.first()[K.reportNotified]?.split(',')?.toSet() ?: emptySet()

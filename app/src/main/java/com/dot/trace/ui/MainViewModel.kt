@@ -17,6 +17,15 @@ import com.dot.trace.stats.Report
 import com.dot.trace.stats.ReportBuilder
 import com.dot.trace.trips.Segment
 import com.dot.trace.trips.TripClassifier
+import com.dot.trace.trips.Corrections
+import com.dot.trace.trips.DayAnalyzer
+import com.dot.trace.trips.DayStore
+import com.dot.trace.trips.PlaceSuggester
+import com.dot.trace.trips.PlaceSuggestion
+import com.dot.trace.trips.TransportMode
+import com.dot.trace.data.ModeRuleEntity
+import com.dot.trace.data.OverrideEntity
+import com.dot.trace.data.PoiNameEntity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -65,11 +74,81 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         .flatMapLatest { d -> dao.observeBetween(startOf(d), startOf(d.plusDays(1))).map { DayPoints(d, it) } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), DayPoints(null, emptyList()))
 
-    /** 선택한 날짜를 머무름·이동 구간으로 나누고 이동 수단을 추정한 결과 */
-    val trips: StateFlow<DayTrips> = day
+    private val analysis = app.db.analysis()
+
+    /** 선택한 날짜를 머무름·이동 구간으로 나누고 이동 수단을 추정한 결과 (수정 전) */
+    private val rawTrips: kotlinx.coroutines.flow.Flow<DayTrips> = day
         .map { d -> DayTrips(d.date, TripClassifier.classify(d.points)) }
         .flowOn(Dispatchers.Default)
+
+    /** 사용자 수정·학습 규칙·장소 이름 */
+    private val corrections: kotlinx.coroutines.flow.Flow<Corrections> = kotlinx.coroutines.flow.combine(
+        analysis.observeOverrides(), analysis.observeRules(), app.db.places().observeAll(), analysis.observePoi(),
+    ) { o, r, p, poi -> Corrections(o, r, p, poi) }
+
+    /** 화면에 보여 줄 하루 정리: 분석 결과 + 사용자 수정 + 이름 */
+    val trips: StateFlow<DayTrips> = kotlinx.coroutines.flow.combine(rawTrips, corrections) { t, c ->
+        DayTrips(t.date, DayAnalyzer.apply(t.segments, c))
+    }
+        .flowOn(Dispatchers.Default)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), DayTrips(null, emptyList()))
+
+    // ── 타임라인에서 고치기 ──
+
+    /** 머문 곳 이름 고치기. remember면 다음에도 이 근처에 이 이름을 붙인다 */
+    fun renameStay(seg: Segment, name: String, remember: Boolean) = viewModelScope.launch {
+        val n = name.trim()
+        analysis.deleteOverridesBetween(seg.start + 1, seg.end - 1)
+        if (n.isNotEmpty()) analysis.insertOverride(OverrideEntity(start = seg.start, end = seg.end, name = n))
+        if (remember && n.isNotEmpty()) {
+            app.db.places().upsert(PlaceEntity(kind = PlaceEntity.LABEL, name = n, lat = seg.lat, lng = seg.lng, radius = 100f))
+        }
+    }
+
+    /** 이동 수단 고치기. learn이면 같은 출발·도착 이동은 다음에도 이 수단으로 */
+    fun changeMode(seg: Segment, mode: TransportMode, learn: Boolean) = viewModelScope.launch {
+        analysis.deleteOverridesBetween(seg.start + 1, seg.end - 1)
+        analysis.insertOverride(OverrideEntity(start = seg.start, end = seg.end, mode = mode.name))
+        if (learn) {
+            analysis.insertRule(ModeRuleEntity(startLat = seg.lat, startLng = seg.lng, endLat = seg.endLat, endLng = seg.endLng, mode = mode.name))
+        }
+    }
+
+    /** 지도에서 찾은 상호 이름 저장 */
+    fun savePoi(lat: Double, lng: Double, name: String) = viewModelScope.launch {
+        analysis.putPoi(PoiNameEntity(DayAnalyzer.poiKey(lat, lng), lat, lng, name))
+    }
+
+    val rules: StateFlow<List<ModeRuleEntity>> = analysis.observeRules()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    fun deleteRule(id: Long) = viewModelScope.launch { analysis.deleteRule(id) }
+
+    // ── 집·회사 자동 제안 ──
+
+    private val _suggestion = MutableStateFlow<PlaceSuggestion?>(null)
+    val suggestion: StateFlow<PlaceSuggestion?> = _suggestion
+
+    fun checkSuggestions() = viewModelScope.launch(Dispatchers.Default) {
+        val places = app.db.places().all()
+        val dismissed = app.prefs.suggestDismissed()
+        val store = DayStore(app.db)
+        val days = (1L..21L).map { today.minusDays(it) }
+        val segs = days.associateWith { store.segments(it) }
+        _suggestion.value = PlaceSuggester.suggest(segs, places, dismissed, zone)
+    }
+
+    fun acceptSuggestion() = viewModelScope.launch {
+        val s = _suggestion.value ?: return@launch
+        app.db.places().upsert(PlaceEntity(kind = s.kind, name = if (s.kind == PlaceEntity.HOME) "집" else "회사", lat = s.lat, lng = s.lng))
+        _suggestion.value = null
+    }
+
+    fun dismissSuggestion() = viewModelScope.launch {
+        val s = _suggestion.value ?: return@launch
+        app.prefs.addSuggestDismissed(s.key)
+        _suggestion.value = null
+    }
 
     /** 내 장소 (집·회사·자주 가는 곳) */
     val places: StateFlow<List<PlaceEntity>> = app.db.places().observeAll()
@@ -77,7 +156,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     /** 월간·연간 리포트 만들기 */
     suspend fun report(period: Period): Report =
-        ReportBuilder.build(app, dao, app.db.places().all(), period)
+        ReportBuilder.build(app, app.db, period)
 
     fun markReportSeen(key: String) = viewModelScope.launch { app.prefs.setReportSeen(key) }
 

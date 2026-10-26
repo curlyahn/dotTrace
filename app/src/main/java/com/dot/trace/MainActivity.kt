@@ -152,6 +152,7 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         permTick++
         vm.checkPendingReport()
+        vm.checkSuggestions()
         // 기록을 켜 두었는데 서비스가 멈춰 있으면(재부팅, 강제 종료 등) 앱을 열 때 이어서 기록
         lifecycleScope.launch {
             val wanted = (application as TraceApp).prefs.current().trackingEnabled
