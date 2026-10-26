@@ -1,8 +1,5 @@
 package com.dot.trace.ui
 
-import android.graphics.Bitmap
-import android.graphics.Canvas
-import android.graphics.Paint
 import android.location.Location
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -10,8 +7,10 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -56,16 +55,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.dot.trace.BuildConfig
-import com.dot.trace.R
 import com.dot.trace.data.PointEntity
 import com.dot.trace.tracking.Phase
 import com.dot.trace.tracking.TrackerStatus
@@ -73,22 +68,6 @@ import com.dot.trace.tracking.TrackingService
 import com.dot.trace.trips.Segment
 import com.dot.trace.trips.TransportMode
 import com.dot.trace.ui.theme.Dot
-import com.google.android.gms.maps.CameraUpdateFactory
-import com.google.android.gms.maps.model.BitmapDescriptor
-import com.google.android.gms.maps.model.BitmapDescriptorFactory
-import com.google.android.gms.maps.model.CameraPosition
-import com.google.android.gms.maps.model.JointType
-import com.google.android.gms.maps.model.LatLng
-import com.google.android.gms.maps.model.LatLngBounds
-import com.google.android.gms.maps.model.MapStyleOptions
-import com.google.android.gms.maps.model.RoundCap
-import com.google.maps.android.compose.GoogleMap
-import com.google.maps.android.compose.MapProperties
-import com.google.maps.android.compose.MapUiSettings
-import com.google.maps.android.compose.Marker
-import com.google.maps.android.compose.MarkerState
-import com.google.maps.android.compose.Polyline
-import com.google.maps.android.compose.rememberCameraPositionState
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.time.Instant
@@ -97,8 +76,6 @@ import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import java.util.Date
 import java.util.Locale
-
-private val SEOUL = LatLng(37.5665, 126.9780)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -128,12 +105,13 @@ fun MapScreen(
     var mapLoaded by remember { mutableStateOf(false) }
     var fittedFor by remember { mutableStateOf<LocalDate?>(null) }
 
-    val cameraState = rememberCameraPositionState {
-        position = CameraPosition.fromLatLngZoom(SEOUL, 11f)
+    val controller = remember { MapController() }
+    with(density) {
+        controller.paddingTop = (WindowInsets.statusBars.getTop(this) + 84.dp.roundToPx())
+        controller.paddingBottom = (WindowInsets.navigationBars.getBottom(this) + (if (moves.isEmpty()) 280.dp else 350.dp).roundToPx())
+        controller.paddingSide = 40.dp.roundToPx()
     }
-    val mapStyle = remember { MapStyleOptions.loadRawResourceStyle(context, R.raw.map_style_dark) }
 
-    val path = remember(points) { points.map { LatLng(it.lat, it.lng) } }
     // 머물러 있던 구간은 점이 겹치므로, 15m 이상 움직였을 때만 점을 하나씩 찍는다
     val dots = remember(points) { thinOut(points, minDistanceM = 15f) }
     val distanceKm = remember(points) { distanceKm(points) }
@@ -145,133 +123,35 @@ fun MapScreen(
         HashMap<Long, TransportMode>().apply { moves.forEach { m -> m.points.forEach { put(it.id, m.mode) } } }
     }
 
-    fun fit(pts: List<PointEntity>) {
-        if (pts.isEmpty()) return
-        scope.launch {
-            val ll = pts.map { LatLng(it.lat, it.lng) }
-            if (ll.distinct().size == 1) {
-                cameraState.animate(CameraUpdateFactory.newLatLngZoom(ll.first(), 16f))
-            } else {
-                val b = LatLngBounds.builder().apply { ll.forEach { include(it) } }.build()
-                cameraState.animate(CameraUpdateFactory.newLatLngBounds(b, with(density) { 48.dp.roundToPx() }))
-            }
-        }
-    }
+    fun fit(pts: List<PointEntity>) = controller.fit(pts)
 
     // 날짜를 바꾸면(또는 그날 첫 기록이 생기면) 그날의 경로가 모두 보이게 카메라를 맞춘다
     LaunchedEffect(mapLoaded, day.date, points.isNotEmpty()) {
         if (!mapLoaded || day.date != date || fittedFor == date) return@LaunchedEffect
-        if (path.isEmpty()) {
-            latest?.let { cameraState.animate(CameraUpdateFactory.newLatLngZoom(LatLng(it.lat, it.lng), 14f)) }
+        if (points.isEmpty()) {
+            latest?.let { controller.focus(it) }
             return@LaunchedEffect
         }
-        if (path.distinct().size == 1) {
-            cameraState.animate(CameraUpdateFactory.newLatLngZoom(path.first(), 16f))
-        } else {
-            val bounds = LatLngBounds.builder().apply { path.forEach { include(it) } }.build()
-            val pad = with(density) { 48.dp.roundToPx() }
-            cameraState.animate(CameraUpdateFactory.newLatLngBounds(bounds, pad))
-        }
+        controller.fit(points)
         fittedFor = date
     }
 
     Box(Modifier.fillMaxSize().background(Dot.Ink)) {
-        GoogleMap(
+        TraceMap(
+            controller = controller,
+            points = points,
+            dots = dots,
+            moves = moves,
+            modeOfPoint = modeOfPoint,
+            selectedTrip = selectedTrip,
+            selected = selected,
+            onPointClick = { p ->
+                selected = p
+                if (p == null) selectedTrip = null
+            },
+            onReady = { mapLoaded = true },
             modifier = Modifier.fillMaxSize(),
-            cameraPositionState = cameraState,
-            properties = MapProperties(mapStyleOptions = mapStyle, isBuildingEnabled = false),
-            uiSettings = MapUiSettings(
-                zoomControlsEnabled = false,
-                mapToolbarEnabled = false,
-                compassEnabled = false,
-                myLocationButtonEnabled = false,
-                rotationGesturesEnabled = false,
-                tiltGesturesEnabled = false,
-            ),
-            // 위·아래 떠 있는 카드에 지도 로고와 경로가 가리지 않도록
-            contentPadding = PaddingValues(top = 96.dp, bottom = if (moves.isEmpty()) 230.dp else 300.dp),
-            onMapLoaded = { mapLoaded = true },
-            onMapClick = { selected = null; selectedTrip = null },
-        ) {
-            val dotIcons = remember {
-                TransportMode.entries.associateWith { dotDescriptor(ModeStyle.color(it).copy(alpha = 0.9f), Dot.Ink, 9, density.density) }
-            }
-            val dimIcon = remember { dotDescriptor(Dot.Faint, Dot.Ink, 7, density.density) }
-            val headIcon = remember { dotDescriptor(Dot.Lime, Dot.Ink, 18, density.density) }
-            val selectedIcon = remember { dotDescriptor(Color.White, Dot.Lime, 16, density.density) }
-
-            // 하루 전체를 옅은 선으로 깔고, 그 위에 이동 수단별 색으로 구간을 칠한다
-            if (path.size >= 2) {
-                Polyline(
-                    points = path,
-                    color = Dot.Muted.copy(alpha = 0.35f),
-                    width = with(density) { 2.dp.toPx() },
-                    jointType = JointType.ROUND,
-                )
-            }
-            moves.forEach { m ->
-                val dim = selectedTrip != null && selectedTrip != m
-                Polyline(
-                    points = m.points.map { LatLng(it.lat, it.lng) },
-                    color = ModeStyle.color(m.mode).copy(alpha = if (dim) 0.2f else 0.8f),
-                    width = with(density) { (if (selectedTrip == m) 5.dp else 3.5.dp).toPx() },
-                    jointType = JointType.ROUND,
-                    startCap = RoundCap(),
-                    endCap = RoundCap(),
-                    zIndex = if (selectedTrip == m) 1f else 0.5f,
-                )
-            }
-            dots.forEach { p ->
-                key(p.id) {
-                    Marker(
-                        state = remember { MarkerState(LatLng(p.lat, p.lng)) },
-                        icon = modeOfPoint[p.id]?.takeIf { selectedTrip == null || selectedTrip!!.points.any { q -> q.id == p.id } }
-                            ?.let { dotIcons[it] } ?: dimIcon,
-                        anchor = Offset(0.5f, 0.5f),
-                        zIndex = 1f,
-                        onClick = { selected = p; true },
-                    )
-                }
-            }
-            points.lastOrNull()?.let { last -> key("head", last.id) {
-                Marker(
-                    state = remember(last.id) { MarkerState(LatLng(last.lat, last.lng)) },
-                    icon = headIcon,
-                    anchor = Offset(0.5f, 0.5f),
-                    zIndex = 2f,
-                    onClick = { selected = last; true },
-                )
-            } }
-            selected?.let { s -> key("sel", s.id) {
-                Marker(
-                    state = remember(s.id) { MarkerState(LatLng(s.lat, s.lng)) },
-                    icon = selectedIcon,
-                    anchor = Offset(0.5f, 0.5f),
-                    zIndex = 3f,
-                    onClick = { true },
-                )
-            } }
-        }
-
-        if (!BuildConfig.HAS_MAPS_KEY) {
-            // 구글 지도 키 없이 빌드하면 지도가 빈 화면으로 멈춰 있다 → 이유를 알려 준다
-            Surface(
-                modifier = Modifier.align(Alignment.Center).padding(24.dp),
-                shape = RoundedCornerShape(20.dp),
-                color = Dot.Surface,
-            ) {
-                Column(Modifier.padding(20.dp)) {
-                    Text("지도 키가 없어요", style = MaterialTheme.typography.titleMedium, color = Dot.Text, fontWeight = FontWeight.Bold)
-                    Spacer(Modifier.height(6.dp))
-                    Text(
-                        "이 APK는 구글 지도 API 키 없이 빌드돼서 지도를 그릴 수 없어요. 위치 기록은 정상이에요.\n\n" +
-                            "GitHub 저장소 Secrets에 MAPS_API_KEY와 DEBUG_KEYSTORE_BASE64를 넣고 다시 빌드해 주세요.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Dot.Muted,
-                    )
-                }
-            }
-        }
+        )
 
         // 위: 날짜 선택 + 설정
         Row(
@@ -299,9 +179,7 @@ fun MapScreen(
         ) {
             RoundIconButton(onClick = {
                 val target = points.lastOrNull() ?: latest
-                target?.let { t ->
-                    scope.launch { cameraState.animate(CameraUpdateFactory.newLatLngZoom(LatLng(t.lat, t.lng), 16f)) }
-                }
+                target?.let { controller.focus(it) }
             }) {
                 Icon(Icons.Rounded.MyLocation, contentDescription = "마지막 위치로", tint = Dot.Text)
             }
@@ -543,18 +421,6 @@ private fun TripStrip(trips: List<Segment>, selected: Segment?, onSelect: (Segme
             }
         }
     }
-}
-
-/** 가운데가 채워진 원 + 테두리 모양의 지도 점 아이콘 */
-private fun dotDescriptor(fill: Color, stroke: Color, sizeDp: Int, density: Float): BitmapDescriptor {
-    val px = (sizeDp * density).toInt().coerceAtLeast(4)
-    val bmp = Bitmap.createBitmap(px, px, Bitmap.Config.ARGB_8888)
-    val c = Canvas(bmp)
-    val r = px / 2f
-    val strokeW = (px * 0.18f).coerceAtLeast(1.5f * density)
-    c.drawCircle(r, r, r, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = stroke.toArgb() })
-    c.drawCircle(r, r, r - strokeW, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = fill.toArgb() })
-    return BitmapDescriptorFactory.fromBitmap(bmp)
 }
 
 private fun thinOut(points: List<PointEntity>, minDistanceM: Float): List<PointEntity> {

@@ -18,7 +18,7 @@ Dot(할 일 앱)과 같은 미니멀 다크 + 라임 포인트 스타일입니�
 - 위치 기록은 기기의 로컬 DB(Room/SQLite)에만 저장하고, 어떤 서버로도 보내지 않습니다.
 - 위치는 배터리를 아끼기 위해 OS의 **Fused Location**(GPS + Wi-Fi + 센서)에서 받습니다.
   이 과정에서 OS가 Wi-Fi·기지국 정보를 구글 위치 서비스에 조회할 수 있지만, 기록 자체는 휴대폰에만 남습니다.
-- 구글 지도 SDK는 **지도 배경(타일)을 그리는 데만** 쓰고, 구글의 '내 위치' 기능은 끄고 직접 점을 찍습니다.
+- 지도는 **MapLibre + OpenFreeMap**(OpenStreetMap 데이터)을 씁니다. 회원가입·API 키·결제 계정이 없고, 지도 배경(타일)만 받아옵니다.
 - 안드로이드 자동 백업(`allowBackup`)도 꺼서 구글 드라이브로 복사되지 않습니다. 백업은 GPX 내보내기로 직접 하세요.
 
 ---
@@ -46,23 +46,14 @@ Dot(할 일 앱)과 같은 미니멀 다크 + 라임 포인트 스타일입니�
 
 ## 1. 빌드 설정 (한 번만)
 
-GitHub Actions가 APK를 만듭니다. 저장소 **Settings → Secrets and variables → Actions → New repository secret** 에 두 개를 넣으세요.
+GitHub Actions가 APK를 만듭니다. 저장소 **Settings → Secrets and variables → Actions → Secrets → New repository secret** 에 하나만 넣으면 됩니다.
 
-### ① `DEBUG_KEYSTORE_BASE64` — 서명 키
-Dot 앱과 같은 서명 키(`dot-debug.keystore.base64.txt`)의 내용 전체를 넣습니다. (키 파일은 저장소에 올리지 마세요.)
+### `DEBUG_KEYSTORE_BASE64` — 서명 키
+Dot 앱과 같은 서명 키(`dot-debug.keystore.base64.txt`)의 내용 전체를 넣습니다.
 이 키의 SHA-1: `12:8B:4E:D3:59:9E:8B:87:BC:0C:ED:64:C2:11:A8:8F:A8:24:9D:4D`
+빌드마다 같은 키로 서명해야 새 버전을 덮어쓰기 설치할 수 있습니다.
 
-### ② `MAPS_API_KEY` — 구글 지도 키
-1. [Google Cloud Console](https://console.cloud.google.com/) 에서 Dot 앱 때 쓴 프로젝트(또는 새 프로젝트)를 고릅니다.
-2. **API 및 서비스 → 라이브러리** 에서 **Maps SDK for Android** 를 **사용 설정**합니다.
-   (결제 계정 연결을 요구할 수 있습니다. 모바일 지도 표시는 사용량 제한 없이 무료입니다.)
-3. **API 및 서비스 → 사용자 인증 정보 → 사용자 인증 정보 만들기 → API 키**
-4. 만든 키를 열고 제한을 겁니다 (남이 키를 가져가 써도 소용없게):
-   - **애플리케이션 제한사항**: Android 앱 → 항목 추가 → 패키지 이름 `com.dot.trace`, SHA-1 위 값
-   - **API 제한사항**: 키 제한 → **Maps SDK for Android** 만 선택
-5. 키 값을 `MAPS_API_KEY` Secret으로 저장합니다.
-
-> Secret이 없어도 빌드는 됩니다. 다만 지도 배경이 회색으로 나오고, 서명 키가 달라 나중에 덮어쓰기 설치가 안 될 수 있습니다.
+지도 API 키는 필요 없습니다.
 
 ## 2. 설치
 
