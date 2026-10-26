@@ -277,6 +277,9 @@ class TrackingService : LifecycleService() {
             }
         }
         if (toSave.isEmpty()) return
+        val lost = if (mode == Mode.Retry && lostSince > 0) (toSave.first().time - lostSince).coerceAtLeast(0) else null
+        val wifiSnap = wifiSnapshot()
+        val activity = currentActivity
         lastSavedTime = last
         lastAcceptedAt = System.currentTimeMillis()
 
@@ -301,9 +304,6 @@ class TrackingService : LifecycleService() {
             }
         }
         val prevSaved = lastSavedLocation
-        val lost = if (mode == Mode.Retry && lostSince > 0) (toSave.first().time - lostSince).coerceAtLeast(0) else null
-        val wifiSnap = wifiSnapshot()
-        val activity = currentActivity
         val newest = toSave.last()
         lastSavedLocation = newest
         updateStatus { it.copy(lastFixAt = newest.time, lastAccuracy = newest.accuracy) }
