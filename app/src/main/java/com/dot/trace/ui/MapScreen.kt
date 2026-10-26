@@ -32,6 +32,7 @@ import androidx.compose.material.icons.rounded.MyLocation
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -47,6 +48,7 @@ import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -56,7 +58,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -103,6 +107,59 @@ fun MapScreen(
     // '내 위치' 버튼으로 잡은 현재 위치 (기록과 별개로 지도에만 표시)
     var me by remember { mutableStateOf<android.location.Location?>(null) }
     var locating by remember { mutableStateOf(false) }
+    var meNote by remember { mutableStateOf<String?>(null) }
+    var noteSeq by remember { mutableIntStateOf(0) }
+    val haptic = LocalHapticFeedback.current
+
+    fun note(text: String) { meNote = text; noteSeq++ }
+
+    /**
+     * 현재 위치 찾기.
+     * 1) OS가 갖고 있던 최근 위치를 바로 보여 주고 (즉시 반응)
+     * 2) 새로 정확한 위치를 최대 15초 동안 찾아 바꿔 준다.
+     */
+    fun locate(moveCamera: Boolean) {
+        if (!hasLocationPermission(context)) {
+            note("위치 권한이 필요해요")
+            (points.lastOrNull() ?: latest)?.let { controller.focus(it) }
+            return
+        }
+        if (locating) return
+        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+        locating = true
+        note("현재 위치 찾는 중…")
+        lastKnownLocation(context).addOnSuccessListener { last ->
+            if (last != null && locating) {
+                me = last
+                if (moveCamera) controller.focusAt(last.latitude, last.longitude)
+            }
+        }
+        freshLocation(context)
+            .addOnSuccessListener { loc ->
+                if (loc != null) {
+                    me = loc
+                    if (moveCamera) controller.focusAt(loc.latitude, loc.longitude)
+                    note("오차 약 ${loc.accuracy.toInt()}m")
+                } else if (me != null) {
+                    note("최근 위치를 표시했어요")
+                } else {
+                    note("위치를 못 찾았어요")
+                    (points.lastOrNull() ?: latest)?.let { controller.focus(it) }
+                }
+            }
+            .addOnFailureListener { note(if (me != null) "최근 위치를 표시했어요" else "위치를 못 찾았어요") }
+            .addOnCompleteListener { locating = false }
+    }
+
+    // 안내 문구는 3초 뒤 사라진다
+    LaunchedEffect(noteSeq) {
+        if (meNote == null || locating) return@LaunchedEffect
+        kotlinx.coroutines.delay(3_000)
+        if (!locating) meNote = null
+    }
+    LaunchedEffect(locating) {
+        if (!locating && meNote != null) { kotlinx.coroutines.delay(3_000); if (!locating) meNote = null }
+    }
 
     var selected by remember { mutableStateOf<PointEntity?>(null) }
     var showPicker by remember { mutableStateOf(false) }
@@ -130,6 +187,11 @@ fun MapScreen(
     fun fit(pts: List<PointEntity>) = controller.fit(pts)
 
     // 날짜를 바꾸면(또는 그날 첫 기록이 생기면) 그날의 경로가 모두 보이게 카메라를 맞춘다
+    // 앱을 열면 현재 위치를 한 번 찾아 파란 점으로 보여 준다 (오늘 기록이 없으면 그쪽으로 이동)
+    LaunchedEffect(mapLoaded) {
+        if (mapLoaded && me == null) locate(moveCamera = points.isEmpty() && date == vm.today)
+    }
+
     LaunchedEffect(mapLoaded, day.date, points.isNotEmpty()) {
         if (!mapLoaded || day.date != date || fittedFor == date) return@LaunchedEffect
         if (points.isEmpty()) {
@@ -183,36 +245,26 @@ fun MapScreen(
             Modifier.align(Alignment.BottomCenter).fillMaxWidth().navigationBarsPadding().padding(16.dp),
             horizontalAlignment = Alignment.End,
         ) {
-            RoundIconButton(onClick = {
-                // 지금 위치를 한 번 잡아 지도에 파란 점으로 보여 준다 (실내에서는 Wi-Fi 기반으로 수십 m 오차)
-                val granted = androidx.core.content.ContextCompat.checkSelfPermission(
-                    context, android.Manifest.permission.ACCESS_FINE_LOCATION,
-                ) == android.content.pm.PackageManager.PERMISSION_GRANTED ||
-                    androidx.core.content.ContextCompat.checkSelfPermission(
-                        context, android.Manifest.permission.ACCESS_COARSE_LOCATION,
-                    ) == android.content.pm.PackageManager.PERMISSION_GRANTED
-                if (!granted) {
-                    android.widget.Toast.makeText(context, "위치 권한을 허용해 주세요", android.widget.Toast.LENGTH_SHORT).show()
-                    (points.lastOrNull() ?: latest)?.let { controller.focus(it) }
-                    return@RoundIconButton
-                }
-                if (locating) return@RoundIconButton
-                locating = true
-                android.widget.Toast.makeText(context, "현재 위치 찾는 중…", android.widget.Toast.LENGTH_SHORT).show()
-                currentLocation(context)
-                    .addOnSuccessListener { loc ->
-                        if (loc != null) {
-                            me = loc
-                            controller.focusAt(loc.latitude, loc.longitude)
-                            android.widget.Toast.makeText(context, "현재 위치 (오차 약 ${loc.accuracy.toInt()}m)", android.widget.Toast.LENGTH_SHORT).show()
-                        } else {
-                            android.widget.Toast.makeText(context, "위치를 찾지 못했어요. 휴대폰 위치 설정을 확인해 주세요", android.widget.Toast.LENGTH_LONG).show()
-                            (points.lastOrNull() ?: latest)?.let { controller.focus(it) }
-                        }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                // 위치를 잡으면 버튼 옆에 정확도를 잠깐 보여 준다
+                meNote?.let { note ->
+                    Surface(shape = RoundedCornerShape(50), color = Dot.Surface.copy(alpha = 0.94f), shadowElevation = 6.dp) {
+                        Text(
+                            note,
+                            style = MaterialTheme.typography.labelLarge,
+                            color = Dot.Text,
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                        )
                     }
-                    .addOnCompleteListener { locating = false }
-            }) {
-                Icon(Icons.Rounded.MyLocation, contentDescription = "현재 위치", tint = if (locating) Dot.Lime else Dot.Text)
+                    Spacer(Modifier.width(10.dp))
+                }
+                RoundIconButton(onClick = { locate(moveCamera = true) }) {
+                    if (locating) {
+                        CircularProgressIndicator(Modifier.size(22.dp), color = Dot.Lime, strokeWidth = 2.5.dp)
+                    } else {
+                        Icon(Icons.Rounded.MyLocation, contentDescription = "현재 위치", tint = if (me != null) Dot.Lime else Dot.Text)
+                    }
+                }
             }
             Spacer(Modifier.height(12.dp))
             StatusCard(
@@ -307,11 +359,27 @@ private fun DatePill(
     }
 }
 
-/** 지금 위치 한 번 (권한은 호출 전에 확인한다) */
+private fun hasLocationPermission(context: android.content.Context): Boolean =
+    listOf(android.Manifest.permission.ACCESS_FINE_LOCATION, android.Manifest.permission.ACCESS_COARSE_LOCATION).any {
+        androidx.core.content.ContextCompat.checkSelfPermission(context, it) == android.content.pm.PackageManager.PERMISSION_GRANTED
+    }
+
+/** OS가 이미 알고 있는 최근 위치 (바로 응답) */
 @android.annotation.SuppressLint("MissingPermission")
-private fun currentLocation(context: android.content.Context) =
-    com.google.android.gms.location.LocationServices.getFusedLocationProviderClient(context)
-        .getCurrentLocation(com.google.android.gms.location.Priority.PRIORITY_HIGH_ACCURACY, null)
+private fun lastKnownLocation(context: android.content.Context) =
+    com.google.android.gms.location.LocationServices.getFusedLocationProviderClient(context).lastLocation
+
+/** 새로 잡는 정확한 위치. 10초 이내 위치가 있으면 그걸 쓰고, 없으면 최대 15초 동안 찾는다. */
+@android.annotation.SuppressLint("MissingPermission")
+private fun freshLocation(context: android.content.Context) =
+    com.google.android.gms.location.LocationServices.getFusedLocationProviderClient(context).getCurrentLocation(
+        com.google.android.gms.location.CurrentLocationRequest.Builder()
+            .setPriority(com.google.android.gms.location.Priority.PRIORITY_HIGH_ACCURACY)
+            .setMaxUpdateAgeMillis(10_000)
+            .setDurationMillis(15_000)
+            .build(),
+        null,
+    )
 
 @Composable
 private fun RoundIconButton(onClick: () -> Unit, content: @Composable () -> Unit) {
