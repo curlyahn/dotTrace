@@ -7,22 +7,22 @@ import kotlinx.coroutines.flow.asStateFlow
 enum class Phase {
     /** 기록 꺼짐 */
     Idle,
-    /** GPS로 위치를 찾는 중 (터널·엘리베이터 등에서는 10초마다 다시 시도) */
+    /** 움직이는 중: 설정한 주기로 위치 기록 */
+    Moving,
+    /** 가만히 있음: GPS를 쉬고 15분에 한 번만 확인 (배터리 절약) */
+    Still,
+    /** 제때 위치가 오지 않음 (터널·엘리베이터 등): 10초마다 다시 시도 */
     Searching,
-    /** 위치를 저장했고 다음 기록 시각을 기다리는 중 */
-    Waiting,
-    /** 휴대폰 위치(GPS) 설정이 꺼져 있음 */
-    GpsOff,
+    /** 휴대폰 위치 설정이 꺼져 있음 */
+    LocationOff,
 }
 
 data class TrackerStatus(
     val phase: Phase = Phase.Idle,
-    /** 이번 기록에서 GPS를 시도한 횟수 */
-    val attempts: Int = 0,
     /** 마지막으로 저장한 위치의 시각 (epoch ms) */
     val lastFixAt: Long? = null,
-    /** 다음 기록 예정 시각 (epoch ms) */
-    val nextAt: Long? = null,
+    /** 마지막으로 저장한 위치의 정확도 (m) */
+    val lastAccuracy: Float? = null,
 ) {
     val running: Boolean get() = phase != Phase.Idle
 }

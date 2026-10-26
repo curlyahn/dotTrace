@@ -354,15 +354,13 @@ private fun StatusCard(
     val timeFmt = remember { SimpleDateFormat("HH:mm", Locale.KOREA) }
     val secFmt = remember { SimpleDateFormat("HH:mm:ss", Locale.KOREA) }
 
+    val last = status.lastFixAt?.let { " · 마지막 ${timeFmt.format(Date(it))}" } ?: ""
     val (dotColor, line) = when (status.phase) {
         Phase.Idle -> Dot.Faint to "기록 꺼짐"
-        Phase.Searching -> Dot.Amber to if (status.attempts <= 1) "위치 찾는 중…" else "GPS 신호 기다리는 중 · ${status.attempts}번째 시도"
-        Phase.GpsOff -> Dot.Coral to "휴대폰 위치(GPS)를 켜 주세요"
-        Phase.Waiting -> Dot.Lime to buildString {
-            append("기록 중")
-            status.lastFixAt?.let { append(" · 마지막 ${timeFmt.format(Date(it))}") }
-            status.nextAt?.let { append(" · 다음 ${timeFmt.format(Date(it))}") }
-        }
+        Phase.Moving -> Dot.Lime to "기록 중$last"
+        Phase.Still -> Dot.Muted to "머무는 중 · 위치 업데이트 쉬는 중$last"
+        Phase.Searching -> Dot.Amber to "위치 신호 찾는 중 · 10초마다 시도$last"
+        Phase.LocationOff -> Dot.Coral to "휴대폰 위치 설정을 켜 주세요"
     }
 
     Surface(

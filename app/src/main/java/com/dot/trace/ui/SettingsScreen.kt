@@ -55,6 +55,7 @@ data class PermissionState(
     val fineLocation: Boolean,
     val backgroundLocation: Boolean,
     val batteryExempt: Boolean,
+    val activityRecognition: Boolean,
 )
 
 @Composable
@@ -63,6 +64,7 @@ fun SettingsScreen(
     perms: PermissionState,
     onRequestBackground: () -> Unit,
     onRequestBattery: () -> Unit,
+    onRequestActivity: () -> Unit,
     onBack: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -100,7 +102,7 @@ fun SettingsScreen(
 
         Section("기록 주기")
         Text(
-            "위치를 몇 분마다 저장할지 고르세요. 신호가 없으면 잡힐 때까지 10초마다 다시 시도해요.",
+            "움직이는 동안 위치를 몇 분마다 저장할지 고르세요. 가만히 있으면 위치 업데이트를 끄고, 신호가 없으면 잡힐 때까지 10초마다 다시 시도해요.",
             style = MaterialTheme.typography.bodySmall,
             color = Dot.Muted,
             modifier = Modifier.padding(horizontal = 20.dp),
@@ -126,6 +128,12 @@ fun SettingsScreen(
 
         Section("안정적으로 기록하기")
         StatusRow(
+            title = "신체 활동 감지",
+            body = "가만히 있을 때를 알아내 위치 업데이트를 꺼요. 배터리를 가장 많이 아껴 줘요.",
+            ok = perms.activityRecognition,
+            onClick = onRequestActivity,
+        )
+        StatusRow(
             title = "위치 '항상 허용'",
             body = "휴대폰을 다시 켜도 앱을 열지 않고 기록을 이어가요.",
             ok = perms.backgroundLocation,
@@ -140,7 +148,7 @@ fun SettingsScreen(
 
         Section("내 기록")
         Text(
-            "모든 기록은 이 휴대폰 안에만 저장돼요. 지도 배경만 인터넷에서 받아와요. 지금까지 ${total}개 지점.",
+            "모든 기록은 이 휴대폰 안에만 저장돼요. 지금까지 ${total}개 지점.",
             style = MaterialTheme.typography.bodySmall,
             color = Dot.Muted,
             modifier = Modifier.padding(horizontal = 20.dp),

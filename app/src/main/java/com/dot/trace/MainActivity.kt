@@ -45,6 +45,8 @@ class MainActivity : ComponentActivity() {
         add(Manifest.permission.ACCESS_FINE_LOCATION)
         add(Manifest.permission.ACCESS_COARSE_LOCATION)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) add(Manifest.permission.POST_NOTIFICATIONS)
+        // 정지/이동 감지(배터리 절약). 거부해도 기록은 되지만 큰 움직임 센서만으로 판단한다.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) add(Manifest.permission.ACTIVITY_RECOGNITION)
     }.toTypedArray()
 
     private val locationLauncher = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
@@ -79,6 +81,7 @@ class MainActivity : ComponentActivity() {
                         perms = permissionState(permTick),
                         onRequestBackground = ::requestBackgroundLocation,
                         onRequestBattery = ::requestBatteryExemption,
+                        onRequestActivity = ::requestActivityRecognition,
                         onBack = { screen = "map" },
                     )
                     else -> MapScreen(
@@ -139,6 +142,19 @@ class MainActivity : ComponentActivity() {
         backgroundLauncher.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
     }
 
+    private val activityLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
+        permTick++
+        // 이미 기록 중이면 서비스를 다시 띄워 정지 감지를 켠다
+        if (ok && Tracker.status.value.running) {
+            TrackingService.stop(this)
+            startTracking()
+        }
+    }
+
+    private fun requestActivityRecognition() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) activityLauncher.launch(Manifest.permission.ACTIVITY_RECOGNITION)
+    }
+
     @SuppressLint("BatteryLife")
     private fun requestBatteryExemption() {
         val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName"))
@@ -155,6 +171,7 @@ class MainActivity : ComponentActivity() {
         fineLocation = hasFineLocation(),
         backgroundLocation = Build.VERSION.SDK_INT < Build.VERSION_CODES.Q || granted(Manifest.permission.ACCESS_BACKGROUND_LOCATION),
         batteryExempt = getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(packageName),
+        activityRecognition = Build.VERSION.SDK_INT < Build.VERSION_CODES.Q || granted(Manifest.permission.ACTIVITY_RECOGNITION),
     )
 
     companion object {

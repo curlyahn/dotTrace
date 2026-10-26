@@ -64,8 +64,15 @@ jobs:
       - name: Show build errors
         if: failure()
         run: |
-          grep -E "^e: |error:|What went wrong" -A2 build.log | head -40 | while IFS= read -r line; do
+          grep -iE "^e: |error:|What went wrong|lint-results" -A2 build.log | head -60 | while IFS= read -r line; do
             echo "::error::$line"
+          done
+
+      - name: Show lint report
+        if: failure()
+        run: |
+          for f in $(find app/build -name "lint-results*.txt" 2>/dev/null); do
+            grep -E ": (Error|Warning):" "$f" | head -30 | while IFS= read -r line; do echo "::error::$line"; done
           done
 
       # 만들어진 APK의 서명이 등록한 SHA-1과 같은지 확인한다 (다르면 빌드 실패)
