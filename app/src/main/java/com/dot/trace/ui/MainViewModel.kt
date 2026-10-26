@@ -5,11 +5,15 @@ import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.dot.trace.TraceApp
+import com.dot.trace.data.PlaceEntity
 import com.dot.trace.data.PointEntity
 import com.dot.trace.data.Settings
 import com.dot.trace.export.GpxExporter
 import com.dot.trace.tracking.Tracker
 import com.dot.trace.tracking.TrackerStatus
+import com.dot.trace.stats.Period
+import com.dot.trace.stats.Report
+import com.dot.trace.stats.ReportBuilder
 import com.dot.trace.trips.Segment
 import com.dot.trace.trips.TripClassifier
 import kotlinx.coroutines.Dispatchers
@@ -24,6 +28,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.time.LocalDate
+import java.time.YearMonth
 import java.time.ZoneId
 
 data class DayPoints(val date: LocalDate?, val points: List<PointEntity>)
@@ -52,6 +57,43 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         .map { d -> DayTrips(d.date, TripClassifier.classify(d.points)) }
         .flowOn(Dispatchers.Default)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), DayTrips(null, emptyList()))
+
+    /** 내 장소 (집·회사·자주 가는 곳) */
+    val places: StateFlow<List<PlaceEntity>> = app.db.places().observeAll()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** 월간·연간 리포트 만들기 */
+    suspend fun report(period: Period): Report =
+        ReportBuilder.build(app, dao, app.db.places().all(), period)
+
+    fun markReportSeen(key: String) = viewModelScope.launch { app.prefs.setReportSeen(key) }
+
+    /** 지난달 리포트가 준비됐는데 아직 안 봤다면 그 기간 (매월 1~7일에만) */
+    private val _pendingReport = MutableStateFlow<Period?>(null)
+    val pendingReport: StateFlow<Period?> = _pendingReport
+
+    fun checkPendingReport() = viewModelScope.launch {
+        val now = LocalDate.now(zone)
+        if (now.dayOfMonth > 7) { _pendingReport.value = null; return@launch }
+        // 1월 초에는 지난해 리포트를, 그 밖에는 지난달 리포트를
+        val p: Period = if (now.monthValue == 1) Period.Year(now.year - 1) else Period.Month(YearMonth.from(now).minusMonths(1))
+        val seen = app.prefs.reportSeen()
+        val has = dao.countBetween(startOf(p.start), startOf(p.endExclusive)) > 0
+        _pendingReport.value = if (has && seen != p.key) p else null
+    }
+
+    fun dismissPendingReport() {
+        _pendingReport.value?.let { markReportSeen(it.key) }
+        _pendingReport.value = null
+    }
+
+    suspend fun place(id: Long): PlaceEntity? = app.db.places().get(id)
+
+    suspend fun placeByKind(kind: String): PlaceEntity? = app.db.places().byKind(kind)
+
+    fun savePlace(place: PlaceEntity) = viewModelScope.launch { app.db.places().upsert(place) }
+
+    fun deletePlace(id: Long) = viewModelScope.launch { app.db.places().delete(id) }
 
     val latest: StateFlow<PointEntity?> = dao.observeLatest()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)

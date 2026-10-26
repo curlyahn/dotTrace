@@ -21,10 +21,12 @@ class TraceApp : Application() {
             }
         )
         nm.createNotificationChannel(
-            NotificationChannel(CHANNEL_ALERTS, "기록 상태 알림", NotificationManager.IMPORTANCE_DEFAULT).apply {
-                description = "재부팅 후 기록을 다시 시작해야 할 때 등"
+            NotificationChannel(CHANNEL_ALERTS, "알림 (리포트·기록 상태)", NotificationManager.IMPORTANCE_DEFAULT).apply {
+                description = "월간·연간 리포트, 재부팅 후 기록을 다시 시작해야 할 때 등"
             }
         )
+        // 매월·매년 리포트 알림 예약
+        com.dot.trace.stats.ReportWorker.schedule(this)
     }
 
     companion object {

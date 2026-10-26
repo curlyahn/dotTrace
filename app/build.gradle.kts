@@ -71,6 +71,8 @@ dependencies {
     ksp(libs.androidx.room.compiler)
 
     implementation(libs.androidx.datastore.preferences)
+    // 매월 1일·매년 1일 리포트 알림
+    implementation(libs.androidx.work.runtime.ktx)
 
     // 지도: MapLibre (API 키 없이 OpenFreeMap 지도 사용)
     implementation(libs.maplibre.android)

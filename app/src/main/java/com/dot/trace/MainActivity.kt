@@ -27,10 +27,14 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.dot.trace.tracking.TrackingService
 import com.dot.trace.tracking.Tracker
+import com.dot.trace.ui.AboutScreen
 import com.dot.trace.ui.MainViewModel
 import com.dot.trace.ui.MapScreen
 import com.dot.trace.ui.PermissionState
+import com.dot.trace.ui.PlaceEditScreen
+import com.dot.trace.ui.PlacesScreen
 import com.dot.trace.ui.SettingsScreen
+import com.dot.trace.ui.StatsScreen
 import com.dot.trace.ui.theme.DotTraceTheme
 import kotlinx.coroutines.launch
 
@@ -63,36 +67,80 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // 시스템 바 아이콘은 항상 흰색, 그 뒤에는 어두운 바탕을 깔아 밝은 지도 위에서도 잘 보이게 한다
         enableEdgeToEdge(
-            statusBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
-            navigationBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
+            statusBarStyle = SystemBarStyle.dark(0x990B0B0C.toInt()),
+            navigationBarStyle = SystemBarStyle.dark(0xE60B0B0C.toInt()),
         )
         super.onCreate(savedInstanceState)
         handleIntent(intent)
 
         setContent {
             DotTraceTheme {
-                var screen by rememberSaveable { mutableStateOf("map") }
-                BackHandler(enabled = screen != "map") { screen = "map" }
+                // 화면 경로: map, settings, places, place/<종류>/<id>, stats/<기간>, about
+                val r = route
+                BackHandler(enabled = r != "map") { route = parentOf(r) }
 
-                when (screen) {
-                    "settings" -> SettingsScreen(
+                when {
+                    r == "settings" -> SettingsScreen(
                         vm = vm,
                         perms = permissionState(permTick),
                         onRequestBackground = ::requestBackgroundLocation,
                         onRequestBattery = ::requestBatteryExemption,
                         onRequestActivity = ::requestActivityRecognition,
-                        onBack = { screen = "map" },
+                        onOpenPlaces = { route = "places" },
+                        onOpenStats = { route = "stats/-" },
+                        onOpenAbout = { route = "about" },
+                        onBack = { route = "map" },
                     )
+                    r == "places" -> PlacesScreen(
+                        vm = vm,
+                        onBack = { route = "settings" },
+                        onEdit = { kind, id -> route = "place/$kind/${id ?: "-"}" },
+                    )
+                    r.startsWith("place/") -> {
+                        val parts = r.split("/")
+                        PlaceEditScreen(
+                            vm = vm,
+                            kind = parts.getOrElse(1) { "fav" },
+                            id = parts.getOrNull(2)?.toLongOrNull(),
+                            onBack = { route = "places" },
+                        )
+                    }
+                    r.startsWith("stats/") -> StatsScreen(
+                        vm = vm,
+                        initialKey = r.removePrefix("stats/").takeIf { it != "-" },
+                        onBack = { route = "map" },
+                        onShowPlace = { lat, lng ->
+                            focusTarget = lat to lng
+                            route = "map"
+                        },
+                    )
+                    r == "about" -> AboutScreen(onBack = { route = "settings" })
                     else -> MapScreen(
                         vm = vm,
                         onStart = ::requestStart,
                         onStop = ::stopTracking,
-                        onOpenSettings = { screen = "settings" },
+                        onOpenSettings = { route = "settings" },
+                        onOpenStats = { key -> route = "stats/${key ?: "-"}" },
+                        focusTarget = focusTarget,
+                        onFocusConsumed = { focusTarget = null },
                     )
                 }
             }
         }
+    }
+
+    /** 지금 보이는 화면 */
+    private var route by mutableStateOf("map")
+
+    /** 리포트에서 '지도에서 보기'를 눌렀을 때 지도가 이동할 곳 */
+    private var focusTarget by mutableStateOf<Pair<Double, Double>?>(null)
+
+    private fun parentOf(r: String) = when {
+        r == "places" || r == "about" -> "settings"
+        r.startsWith("place/") -> "places"
+        else -> "map"
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -103,6 +151,7 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         permTick++
+        vm.checkPendingReport()
         // 기록을 켜 두었는데 서비스가 멈춰 있으면(재부팅, 강제 종료 등) 앱을 열 때 이어서 기록
         lifecycleScope.launch {
             val wanted = (application as TraceApp).prefs.current().trackingEnabled
@@ -111,7 +160,11 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleIntent(intent: Intent?) {
-        if (intent?.action == ACTION_RESUME_TRACKING) requestStart()
+        when (intent?.action) {
+            ACTION_RESUME_TRACKING -> requestStart()
+            // 리포트 알림을 눌렀을 때
+            ACTION_OPEN_REPORT -> route = "stats/${intent.getStringExtra(EXTRA_REPORT_KEY) ?: "-"}"
+        }
     }
 
     private fun requestStart() {
@@ -176,5 +229,7 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         const val ACTION_RESUME_TRACKING = "com.dot.trace.RESUME_TRACKING"
+        const val ACTION_OPEN_REPORT = "com.dot.trace.OPEN_REPORT"
+        const val EXTRA_REPORT_KEY = "report_key"
     }
 }

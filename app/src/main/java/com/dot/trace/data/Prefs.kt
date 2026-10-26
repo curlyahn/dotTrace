@@ -41,6 +41,8 @@ class Prefs(context: Context) {
         val interval = intPreferencesKey("interval_minutes")
         val tracking = booleanPreferencesKey("tracking_enabled")
         val mapStyle = androidx.datastore.preferences.core.stringPreferencesKey("map_style")
+        val reportSeen = androidx.datastore.preferences.core.stringPreferencesKey("report_seen")
+        val reportNotified = androidx.datastore.preferences.core.stringPreferencesKey("report_notified")
     }
 
     val settings: Flow<Settings> = ds.data.map { p ->
@@ -58,4 +60,15 @@ class Prefs(context: Context) {
     suspend fun setTrackingEnabled(enabled: Boolean) = ds.edit { it[K.tracking] = enabled }
 
     suspend fun setMapStyle(style: String) = ds.edit { it[K.mapStyle] = style }
+
+    /** 마지막으로 열어 본 리포트 기간 (예: M2026-10) — 앱 안 '리포트 준비됨' 안내를 한 번만 보여 주려고 */
+    suspend fun reportSeen(): String? = ds.data.first()[K.reportSeen]
+    suspend fun setReportSeen(key: String) = ds.edit { it[K.reportSeen] = key }
+
+    /** 마지막으로 알림을 보낸 리포트 기간들 (쉼표로 구분) */
+    suspend fun reportNotified(): Set<String> = ds.data.first()[K.reportNotified]?.split(',')?.toSet() ?: emptySet()
+    suspend fun addReportNotified(key: String) = ds.edit {
+        val set = (it[K.reportNotified]?.split(',')?.toSet() ?: emptySet()) + key
+        it[K.reportNotified] = set.toList().takeLast(24).joinToString(",")
+    }
 }

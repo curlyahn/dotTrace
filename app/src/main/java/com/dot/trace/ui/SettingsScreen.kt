@@ -65,6 +65,9 @@ fun SettingsScreen(
     onRequestBackground: () -> Unit,
     onRequestBattery: () -> Unit,
     onRequestActivity: () -> Unit,
+    onOpenPlaces: () -> Unit,
+    onOpenStats: () -> Unit,
+    onOpenAbout: () -> Unit,
     onBack: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -99,6 +102,15 @@ fun SettingsScreen(
             }
             Text("설정", style = MaterialTheme.typography.headlineSmall, color = Dot.Text)
         }
+
+        Section("내 장소 · 리포트")
+        val places by vm.places.collectAsStateWithLifecycle()
+        NavRow(
+            "내 장소",
+            "집 · 회사 · 자주 가는 곳 ${places.count { it.kind == com.dot.trace.data.PlaceEntity.FAV }}/${com.dot.trace.data.PlaceEntity.MAX_FAVORITES}",
+            onOpenPlaces,
+        )
+        NavRow("이동 리포트", "월간·연간 이동 거리, 머문 곳, 방문 지역", onOpenStats)
 
         Section("기록 주기")
         Text(
@@ -183,6 +195,9 @@ fun SettingsScreen(
         }
         ActionRow("$dayLabel 기록 삭제", color = Dot.Coral) { confirmDelete = true }
 
+        Section("정보")
+        NavRow("정보 · 도움말", "사용법, 만든 이, 앱 버전", onOpenAbout)
+
         Spacer(Modifier.height(32.dp))
     }
 
@@ -243,6 +258,20 @@ private fun StatusRow(title: String, body: String, ok: Boolean, onClick: () -> U
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun NavRow(title: String, body: String, onClick: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 20.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.titleMedium, color = Dot.Text)
+            Text(body, style = MaterialTheme.typography.bodySmall, color = Dot.Muted)
+        }
+        Icon(Icons.AutoMirrored.Rounded.KeyboardArrowRight, contentDescription = null, tint = Dot.Faint)
     }
 }
 

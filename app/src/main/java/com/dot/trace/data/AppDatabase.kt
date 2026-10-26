@@ -55,20 +55,65 @@ interface PointDao {
     @Query("SELECT COUNT(*) FROM points")
     fun observeCount(): Flow<Int>
 
+    @Query("SELECT COUNT(*) FROM points WHERE time >= :from AND time < :to")
+    suspend fun countBetween(from: Long, to: Long): Int
+
     @Query("DELETE FROM points WHERE time >= :from AND time < :to")
     suspend fun deleteBetween(from: Long, to: Long): Int
 }
 
-@Database(entities = [PointEntity::class], version = 2, exportSchema = false)
+/** 사용자가 등록한 장소: 집, 회사, 자주 가는 곳(최대 10개) */
+@Entity(tableName = "places")
+data class PlaceEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    /** home, work, fav */
+    val kind: String,
+    val name: String,
+    val lat: Double,
+    val lng: Double,
+    /** 이 반경(m) 안에 있으면 이 장소에 있는 것으로 본다 */
+    @ColumnInfo(defaultValue = "150") val radius: Float = 150f,
+) {
+    companion object {
+        const val HOME = "home"
+        const val WORK = "work"
+        const val FAV = "fav"
+        const val MAX_FAVORITES = 10
+    }
+}
+
+@Dao
+interface PlaceDao {
+    @Query("SELECT * FROM places ORDER BY CASE kind WHEN 'home' THEN 0 WHEN 'work' THEN 1 ELSE 2 END, id")
+    fun observeAll(): Flow<List<PlaceEntity>>
+
+    @Query("SELECT * FROM places ORDER BY CASE kind WHEN 'home' THEN 0 WHEN 'work' THEN 1 ELSE 2 END, id")
+    suspend fun all(): List<PlaceEntity>
+
+    @Query("SELECT * FROM places WHERE id = :id")
+    suspend fun get(id: Long): PlaceEntity?
+
+    @Query("SELECT * FROM places WHERE kind = :kind LIMIT 1")
+    suspend fun byKind(kind: String): PlaceEntity?
+
+    @Insert(onConflict = androidx.room.OnConflictStrategy.REPLACE)
+    suspend fun upsert(place: PlaceEntity): Long
+
+    @Query("DELETE FROM places WHERE id = :id")
+    suspend fun delete(id: Long)
+}
+
+@Database(entities = [PointEntity::class, PlaceEntity::class], version = 3, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun points(): PointDao
+    abstract fun places(): PlaceDao
 
     companion object {
         @Volatile private var instance: AppDatabase? = null
 
         fun get(context: Context): AppDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(context.applicationContext, AppDatabase::class.java, "dottrace.db")
-                .addMigrations(MIGRATION_1_2)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                 .build()
                 .also { instance = it }
         }
@@ -80,6 +125,17 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE points ADD COLUMN wifi TEXT")
                 db.execSQL("ALTER TABLE points ADD COLUMN transitWifi INTEGER NOT NULL DEFAULT 0")
                 db.execSQL("ALTER TABLE points ADD COLUMN lostMs INTEGER")
+            }
+        }
+
+        /** 내 장소(집·회사·자주 가는 곳) 추가 */
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS places (" +
+                        "id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, kind TEXT NOT NULL, name TEXT NOT NULL, " +
+                        "lat REAL NOT NULL, lng REAL NOT NULL, radius REAL NOT NULL DEFAULT 150)"
+                )
             }
         }
     }

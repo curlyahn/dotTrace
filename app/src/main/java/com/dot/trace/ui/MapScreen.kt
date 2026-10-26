@@ -11,6 +11,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.windowInsetsBottomHeight
+import androidx.compose.foundation.layout.windowInsetsTopHeight
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -27,6 +29,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
+import androidx.compose.material.icons.rounded.BarChart
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.MyLocation
 import androidx.compose.material.icons.rounded.Settings
@@ -66,6 +69,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.dot.trace.data.PointEntity
+import com.dot.trace.data.rememberAddress
 import com.dot.trace.tracking.Phase
 import com.dot.trace.tracking.TrackerStatus
 import com.dot.trace.tracking.TrackingService
@@ -88,6 +92,9 @@ fun MapScreen(
     onStart: () -> Unit,
     onStop: () -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenStats: (String?) -> Unit,
+    focusTarget: Pair<Double, Double>?,
+    onFocusConsumed: () -> Unit,
 ) {
     val context = LocalContext.current
     val density = LocalDensity.current
@@ -104,6 +111,8 @@ fun MapScreen(
     var selectedTrip by remember { mutableStateOf<Segment?>(null) }
     val status by vm.status.collectAsStateWithLifecycle()
     val settings by vm.settings.collectAsStateWithLifecycle()
+    val places by vm.places.collectAsStateWithLifecycle()
+    val pendingReport by vm.pendingReport.collectAsStateWithLifecycle()
     // '내 위치' 버튼으로 잡은 현재 위치 (기록과 별개로 지도에만 표시)
     var me by remember { mutableStateOf<android.location.Location?>(null) }
     var locating by remember { mutableStateOf(false) }
@@ -187,6 +196,15 @@ fun MapScreen(
 
     fun fit(pts: List<PointEntity>) = controller.fit(pts)
 
+    // 리포트에서 '지도에서 보기'로 넘어왔을 때
+    LaunchedEffect(focusTarget, mapLoaded) {
+        val t = focusTarget ?: return@LaunchedEffect
+        if (!mapLoaded) return@LaunchedEffect
+        kotlinx.coroutines.delay(400) // 날짜 맞춤 이동이 끝난 뒤에
+        controller.focusAt(t.first, t.second)
+        onFocusConsumed()
+    }
+
     // 날짜를 바꾸면(또는 그날 첫 기록이 생기면) 그날의 경로가 모두 보이게 카메라를 맞춘다
     // 앱을 열면 현재 위치를 한 번 찾아 파란 점으로 보여 준다 (오늘 기록이 없으면 그쪽으로 이동)
     LaunchedEffect(mapLoaded) {
@@ -217,14 +235,28 @@ fun MapScreen(
                 if (p == null) selectedTrip = null
             },
             styleName = settings.mapStyle,
+            places = places,
             me = me,
             onReady = { mapLoaded = true },
             modifier = Modifier.fillMaxSize(),
         )
 
-        // 위: 날짜 선택 + 설정
+        // 시스템 바 뒤 어두운 바탕: 지도 색과 관계없이 시계·배터리 아이콘과 하단 내비게이션 버튼이 잘 보이게
+        Box(
+            Modifier.align(Alignment.TopCenter).fillMaxWidth()
+                .windowInsetsTopHeight(WindowInsets.statusBars)
+                .background(Dot.Ink.copy(alpha = 0.6f)),
+        )
+        Box(
+            Modifier.align(Alignment.BottomCenter).fillMaxWidth()
+                .windowInsetsBottomHeight(WindowInsets.navigationBars)
+                .background(Dot.Ink.copy(alpha = 0.92f)),
+        )
+
+        // 위: 날짜 선택 + 리포트 + 설정, 그리고 리포트 준비 안내
+        Column(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 16.dp, vertical = 12.dp)) {
         Row(
-            Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 16.dp, vertical = 12.dp),
+            Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             DatePill(
@@ -236,9 +268,32 @@ fun MapScreen(
                 modifier = Modifier.weight(1f),
             )
             Spacer(Modifier.width(10.dp))
+            RoundIconButton(onClick = { onOpenStats(null) }) {
+                Icon(Icons.Rounded.BarChart, contentDescription = "이동 리포트", tint = Dot.Text)
+            }
+            Spacer(Modifier.width(8.dp))
             RoundIconButton(onClick = onOpenSettings) {
                 Icon(Icons.Rounded.Settings, contentDescription = "설정", tint = Dot.Text)
             }
+        }
+        pendingReport?.let { p ->
+            Spacer(Modifier.height(10.dp))
+            Surface(
+                onClick = { vm.dismissPendingReport(); onOpenStats(p.key) },
+                shape = RoundedCornerShape(18.dp),
+                color = Dot.Lime,
+                shadowElevation = 6.dp,
+            ) {
+                Row(Modifier.padding(start = 16.dp, top = 6.dp, bottom = 6.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Rounded.BarChart, null, tint = Dot.OnLime, modifier = Modifier.size(20.dp))
+                    Spacer(Modifier.width(10.dp))
+                    Text("${p.label} 이동 리포트가 준비됐어요", style = MaterialTheme.typography.labelLarge, color = Dot.OnLime, modifier = Modifier.weight(1f))
+                    IconButton(onClick = { vm.dismissPendingReport() }) {
+                        Icon(Icons.Rounded.Close, "닫기", tint = Dot.OnLime, modifier = Modifier.size(18.dp))
+                    }
+                }
+            }
+        }
         }
 
         // 아래: 상태 카드
@@ -292,6 +347,7 @@ fun MapScreen(
         PointsSheet(
             points = points,
             modeOfPoint = modeOfPoint,
+            places = places,
             onDismiss = { showPoints = false },
             onPick = { p ->
                 showPoints = false

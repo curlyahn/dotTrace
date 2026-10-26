@@ -1,9 +1,6 @@
 package com.dot.trace.ui
 
-import android.content.Context
-import android.location.Geocoder
 import android.location.Location
-import android.os.Build
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -31,26 +28,22 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.dot.trace.data.PlaceEntity
 import com.dot.trace.data.PointEntity
+import com.dot.trace.data.match
+import com.dot.trace.data.rememberAddress
 import com.dot.trace.trips.TransportMode
 import com.dot.trace.ui.theme.Dot
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import java.util.concurrent.ConcurrentHashMap
-import kotlin.coroutines.resume
 
 /** 같은 곳(반경 50m)에 이어서 찍힌 지점들을 한 줄로 묶는다 */
 data class PlaceGroup(val points: List<PointEntity>) {
@@ -82,6 +75,7 @@ fun groupPlaces(points: List<PointEntity>, radiusM: Float = 50f): List<PlaceGrou
 fun PointsSheet(
     points: List<PointEntity>,
     modeOfPoint: Map<Long, TransportMode>,
+    places: List<PlaceEntity>,
     onDismiss: () -> Unit,
     onPick: (PointEntity) -> Unit,
 ) {
@@ -109,7 +103,7 @@ fun PointsSheet(
             LazyColumn(Modifier.heightIn(max = 520.dp)) {
                 itemsIndexed(groups, key = { _, g -> g.first.id }) { i, g ->
                     if (i > 0) HorizontalDivider(color = Dot.Line, modifier = Modifier.padding(start = 56.dp))
-                    PlaceRow(g, fmt, modeOfPoint[g.first.id]) { onPick(g.last) }
+                    PlaceRow(g, fmt, modeOfPoint[g.first.id], places.match(g.first.lat, g.first.lng)) { onPick(g.last) }
                 }
             }
             Spacer(Modifier.height(12.dp))
@@ -118,7 +112,7 @@ fun PointsSheet(
 }
 
 @Composable
-private fun PlaceRow(g: PlaceGroup, fmt: SimpleDateFormat, mode: TransportMode?, onClick: () -> Unit) {
+private fun PlaceRow(g: PlaceGroup, fmt: SimpleDateFormat, mode: TransportMode?, place: PlaceEntity?, onClick: () -> Unit) {
     val address = rememberAddress(g.first.lat, g.first.lng)
     val time = if (g.points.size == 1) fmt.format(Date(g.first.time))
     else "${fmt.format(Date(g.first.time))}–${fmt.format(Date(g.last.time))}"
@@ -136,6 +130,16 @@ private fun PlaceRow(g: PlaceGroup, fmt: SimpleDateFormat, mode: TransportMode?,
                     Spacer(Modifier.width(8.dp))
                     Text("${g.points.size}회", style = MaterialTheme.typography.labelSmall, color = Dot.Muted)
                 }
+                if (place != null) {
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        place.name,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Dot.OnLime,
+                        modifier = Modifier.clip(androidx.compose.foundation.shape.RoundedCornerShape(50)).background(Dot.Lime)
+                            .padding(horizontal = 8.dp, vertical = 2.dp),
+                    )
+                }
             }
             Text(
                 address ?: "%.5f, %.5f".format(Locale.US, g.first.lat, g.first.lng),
@@ -149,34 +153,3 @@ private fun PlaceRow(g: PlaceGroup, fmt: SimpleDateFormat, mode: TransportMode?,
     }
 }
 
-/** 좌표 → 주소 (휴대폰의 주소 변환 기능 사용). 한 번 찾은 주소는 기억해 둔다. */
-@Composable
-fun rememberAddress(lat: Double, lng: Double): String? {
-    val context = LocalContext.current
-    val key = "%.4f,%.4f".format(Locale.US, lat, lng)
-    val state by produceState(initialValue = AddressCache[key], key) {
-        if (value == null) value = lookupAddress(context, lat, lng)?.also { AddressCache[key] = it }
-    }
-    return state
-}
-
-private val AddressCache = ConcurrentHashMap<String, String>()
-
-private suspend fun lookupAddress(context: Context, lat: Double, lng: Double): String? = withContext(Dispatchers.IO) {
-    if (!Geocoder.isPresent()) return@withContext null
-    val geocoder = Geocoder(context, Locale.KOREA)
-    val address = runCatching {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            suspendCancellableCoroutine { cont ->
-                geocoder.getFromLocation(lat, lng, 1, object : Geocoder.GeocodeListener {
-                    override fun onGeocode(addresses: MutableList<android.location.Address>) { cont.resume(addresses.firstOrNull()) }
-                    override fun onError(errorMessage: String?) { cont.resume(null) }
-                })
-            }
-        } else {
-            @Suppress("DEPRECATION")
-            geocoder.getFromLocation(lat, lng, 1)?.firstOrNull()
-        }
-    }.getOrNull() ?: return@withContext null
-    address.getAddressLine(0)?.removePrefix("대한민국")?.trim()?.takeIf { it.isNotBlank() }
-}

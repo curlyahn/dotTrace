@@ -73,6 +73,16 @@ class MapController {
 
     fun focus(p: PointEntity) = fit(listOf(p))
 
+    /** 지금 지도 가운데 좌표 (장소 고르기용) */
+    fun center(): LatLng? = map?.cameraPosition?.target
+
+    /** 확대 정도를 정해 한 점으로 이동 */
+    fun moveTo(lat: Double, lng: Double, zoom: Double = 16.0, animate: Boolean = true) {
+        val m = map ?: return
+        val u = CameraUpdateFactory.newLatLngZoom(LatLng(lat, lng), zoom)
+        if (animate) m.animateCamera(u, 500) else m.moveCamera(u)
+    }
+
     fun focusAt(lat: Double, lng: Double) =
         fit(listOf(PointEntity(time = 0, lat = lat, lng = lng, accuracy = null, altitude = null, speed = null)))
 }
@@ -93,12 +103,17 @@ fun TraceMap(
     onPointClick: (PointEntity?) -> Unit,
     onReady: () -> Unit,
     modifier: Modifier = Modifier,
+    /** 내 장소 (집·회사·자주 가는 곳): 이름표와 함께 표시 */
+    places: List<com.dot.trace.data.PlaceEntity> = emptyList(),
+    /** 지도 이동이 멈췄을 때 가운데 좌표 */
+    onCameraIdle: ((LatLng) -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     val currentPoints by rememberUpdatedState(points)
     val currentOnClick by rememberUpdatedState(onPointClick)
     val currentOnReady by rememberUpdatedState(onReady)
+    val currentOnIdle by rememberUpdatedState(onCameraIdle)
     var style by remember { mutableStateOf<Style?>(null) }
     var mapRef by remember { mutableStateOf<MapLibreMap?>(null) }
 
@@ -149,6 +164,7 @@ fun TraceMap(
                 currentOnClick(id?.let { pid -> currentPoints.firstOrNull { it.id == pid } })
                 id != null
             }
+            map.addOnCameraIdleListener { map.cameraPosition.target?.let { t -> currentOnIdle?.invoke(t) } }
             mapRef = map
         }
     }
@@ -176,8 +192,13 @@ fun TraceMap(
     }
 
     // 데이터가 바뀌면 지도 위 선·점만 다시 그린다
-    LaunchedEffect(style, points, dots, moves, modeOfPoint, selectedTrip, selected, me) {
+    LaunchedEffect(style, points, dots, moves, modeOfPoint, selectedTrip, selected, me, places) {
         val s = style ?: return@LaunchedEffect
+        s.getSourceAs<GeoJsonSource>(SRC_PLACES)?.setGeoJson(
+            FeatureCollection.fromFeatures(places.map { p ->
+                Feature.fromGeometry(Point.fromLngLat(p.lng, p.lat)).apply { addStringProperty("name", p.name) }
+            })
+        )
         s.getSourceAs<GeoJsonSource>(SRC_ME)?.setGeoJson(
             FeatureCollection.fromFeatures(listOfNotNull(me?.let { Feature.fromGeometry(Point.fromLngLat(it.longitude, it.latitude)) }))
         )
@@ -201,11 +222,31 @@ private const val SRC_DOTS = "trace-dots-src"
 private const val SRC_HEAD = "trace-head-src"
 private const val SRC_SEL = "trace-sel-src"
 private const val SRC_ME = "trace-me-src"
+private const val SRC_PLACES = "trace-places-src"
 
 private fun hex(c: Color) = String.format("#%06X", c.toArgb() and 0xFFFFFF)
 
 private fun addTraceLayers(s: Style) {
-    listOf(SRC_BASE, SRC_SEG, SRC_DOTS, SRC_HEAD, SRC_SEL, SRC_ME).forEach { s.addSource(GeoJsonSource(it)) }
+    listOf(SRC_PLACES, SRC_BASE, SRC_SEG, SRC_DOTS, SRC_HEAD, SRC_SEL, SRC_ME).forEach { s.addSource(GeoJsonSource(it)) }
+
+    // 내 장소: 경로 아래에 이름표와 함께
+    s.addLayer(CircleLayer("trace-places", SRC_PLACES).withProperties(
+        PropertyFactory.circleColor(hex(Dot.Ink)),
+        PropertyFactory.circleRadius(9f),
+        PropertyFactory.circleStrokeColor("#FFFFFF"),
+        PropertyFactory.circleStrokeWidth(2.5f),
+    ))
+    s.addLayer(SymbolLayer("trace-places-label", SRC_PLACES).withProperties(
+        PropertyFactory.textField(Expression.get("name")),
+        PropertyFactory.textFont(arrayOf("Noto Sans Bold", "Noto Sans Regular")),
+        PropertyFactory.textSize(13f),
+        PropertyFactory.textColor(hex(Dot.Ink)),
+        PropertyFactory.textHaloColor("#FFFFFF"),
+        PropertyFactory.textHaloWidth(2f),
+        PropertyFactory.textOffset(arrayOf(0f, 1.4f)),
+        PropertyFactory.textAnchor(Property.TEXT_ANCHOR_TOP),
+        PropertyFactory.textAllowOverlap(true),
+    ))
 
     // 하루 전체 경로 (옅은 선)
     s.addLayer(LineLayer("trace-base", SRC_BASE).withProperties(
