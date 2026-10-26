@@ -49,8 +49,8 @@ Dot(할 일 앱)과 같은 미니멀 다크 + 라임 포인트 스타일입니�
 GitHub Actions가 APK를 만듭니다. 저장소 **Settings → Secrets and variables → Actions → New repository secret** 에 두 개를 넣으세요.
 
 ### ① `DEBUG_KEYSTORE_BASE64` — 서명 키
-DotTrace 전용 서명 키 `dottrace-debug.keystore.base64.txt` 의 내용 전체를 넣습니다. (키 파일은 저장소에 올리지 마세요.)
-이 키의 SHA-1: `7C:12:3E:6B:CE:2E:44:AB:8C:6F:8E:84:21:C3:E8:DC:61:12:3B:50`
+Dot 앱과 같은 서명 키(`dot-debug.keystore.base64.txt`)의 내용 전체를 넣습니다. (키 파일은 저장소에 올리지 마세요.)
+이 키의 SHA-1: `12:8B:4E:D3:59:9E:8B:87:BC:0C:ED:64:C2:11:A8:8F:A8:24:9D:4D`
 
 ### ② `MAPS_API_KEY` — 구글 지도 키
 1. [Google Cloud Console](https://console.cloud.google.com/) 에서 Dot 앱 때 쓴 프로젝트(또는 새 프로젝트)를 고릅니다.

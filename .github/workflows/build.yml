@@ -11,8 +11,8 @@ permissions:
   contents: write   # 태그 빌드 시 GitHub Release 만들기
 
 env:
-  # DotTrace 전용 서명 키의 SHA-1 (Google Cloud의 Maps API 키 제한에 등록)
-  EXPECTED_SHA1: "7C:12:3E:6B:CE:2E:44:AB:8C:6F:8E:84:21:C3:E8:DC:61:12:3B:50"
+  # Dot 앱과 같은 서명 키의 SHA-1 (Google Cloud의 Maps API 키 제한에 등록)
+  EXPECTED_SHA1: "12:8B:4E:D3:59:9E:8B:87:BC:0C:ED:64:C2:11:A8:8F:A8:24:9D:4D"
 
 jobs:
   build:
