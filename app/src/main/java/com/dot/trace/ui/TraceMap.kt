@@ -140,6 +140,16 @@ fun TraceMap(
         }
     }
 
+    // 지도 그림(타일)을 못 받아도 onMapLoaded가 오지 않아 경로·카메라가 멈추지 않도록, 지도가 만들어지면 잠시 뒤 준비된 것으로 본다
+    LaunchedEffect(cameraState) {
+        while (cameraState.projection == null) kotlinx.coroutines.delay(200)
+        kotlinx.coroutines.delay(2_500)
+        if (!controller.loaded) {
+            controller.loaded = true
+            currentOnReady()
+        }
+    }
+
     // 지도 이동이 멈추면 가운데 좌표를 알려 준다
     LaunchedEffect(cameraState.isMoving) {
         if (!cameraState.isMoving) currentOnIdle?.invoke(cameraState.position.target)
@@ -169,8 +179,10 @@ fun TraceMap(
         // 위·아래 떠 있는 카드에 지도 로고와 경로가 가리지 않도록
         contentPadding = padding,
         onMapLoaded = {
-            controller.loaded = true
-            currentOnReady()
+            if (!controller.loaded) {
+                controller.loaded = true
+                currentOnReady()
+            }
         },
         onMapClick = { onPointClick(null) },
     ) {

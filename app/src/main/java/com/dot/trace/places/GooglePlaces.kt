@@ -70,7 +70,7 @@ object GooglePlaces {
             val text = (if (code in 200..299) conn.inputStream else conn.errorStream)?.bufferedReader()?.use { it.readText() } ?: ""
             conn.disconnect()
             if (code !in 200..299) {
-                lastError = "HTTP $code ${text.take(200)}"
+                lastError = "HTTP $code ${text.take(400)}"
                 return@runCatching null
             }
             lastError = null
@@ -91,6 +91,26 @@ object GooglePlaces {
         }.getOrElse { e ->
             lastError = e.message
             null
+        }
+    }
+
+    /** 연결 확인: 서울시청 근처를 한 번 물어보고 결과를 사람이 읽을 수 있게 */
+    suspend fun test(context: Context): String {
+        if (!available) return "이 빌드에는 API 키가 없어요 (GitHub Secrets의 MAPS_API_KEY 확인)"
+        val found = nearest(context, 37.5663, 126.9779, 150.0)
+        val err = lastError
+        val key = BuildConfig.MAPS_API_KEY
+        val head = "키 ${key.take(6)}…${key.takeLast(4)} · 앱 SHA-1 ${signingSha1(context)?.chunked(2)?.joinToString(":") ?: "?"}\n"
+        return head + when {
+            found != null -> "정상: '${found.name}'을(를) 찾았어요"
+            err == null -> "연결은 됐지만 근처 장소가 없어요"
+            "API_KEY_ANDROID_APP_BLOCKED" in err || "Android client application" in err ->
+                "키의 Android 앱 제한(패키지 com.dot.trace / SHA-1)이 맞지 않아요\n$err"
+            "SERVICE_DISABLED" in err || "has not been used" in err -> "Places API (New)가 꺼져 있어요\n$err"
+            "API_KEY_SERVICE_BLOCKED" in err -> "키의 API 제한에 Places API (New)가 빠져 있어요\n$err"
+            "API_KEY_INVALID" in err || "API key not valid" in err -> "키 값이 잘못됐어요 (Secrets에 넣은 값 확인)\n$err"
+            "BILLING" in err -> "프로젝트에 결제 계정이 연결되지 않았어요\n$err"
+            else -> "오류: $err"
         }
     }
 

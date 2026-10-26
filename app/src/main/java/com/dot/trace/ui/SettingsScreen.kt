@@ -190,6 +190,31 @@ fun SettingsScreen(
             )
         }
 
+        // Google 연결 확인 (지도가 안 보일 때 원인 찾기)
+        var testResult by remember { mutableStateOf<String?>(null) }
+        var testing by remember { mutableStateOf(false) }
+        Row(
+            Modifier.fillMaxWidth().clickable(enabled = !testing) {
+                testing = true
+                testResult = "확인 중…"
+                scope.launch {
+                    testResult = com.dot.trace.places.GooglePlaces.test(context)
+                    testing = false
+                }
+            }.padding(horizontal = 20.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("Google 연결 확인", style = MaterialTheme.typography.titleMedium, color = Dot.Text)
+                Text(
+                    testResult ?: "지도나 장소 이름이 안 보일 때 눌러 보세요. API 키 설정 문제를 알려 줘요.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (testResult?.startsWith("정상") == true || testResult?.contains("\n정상") == true) Dot.Lime else Dot.Muted,
+                )
+            }
+            Icon(Icons.AutoMirrored.Rounded.KeyboardArrowRight, contentDescription = null, tint = Dot.Faint)
+        }
+
         Section("안정적으로 기록하기")
         StatusRow(
             title = "신체 활동 감지",
