@@ -128,7 +128,7 @@ class TrackingService : LifecycleService() {
             when (last.activityType) {
                 DetectedActivity.STILL -> if (enter) {
                     currentActivity = DetectedActivity.STILL
-                    if (mode != Mode.Still) applyMode(Mode.Still)
+                    if (mode != Mode.Still) settleThenStill()
                 } else {
                     currentActivity = null
                     if (mode == Mode.Still) resumeMoving()
@@ -151,8 +151,21 @@ class TrackingService : LifecycleService() {
     /** 다시 움직이기 시작: 정상 주기로 돌아가고 출발 지점을 바로 한 번 잡는다 */
     private fun resumeMoving() {
         applyMode(Mode.Normal)
-        fused.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, null)
-            .addOnSuccessListener { loc -> loc?.let { handleLocations(listOf(it)) } }
+        captureNow()
+    }
+
+    /** 지금 위치를 한 번 바로 잡아 저장한다 (기록 시작, 출발·도착 지점). 실내라 덜 정확해도 받아 둔다. */
+    private fun captureNow(then: (() -> Unit)? = null) {
+        runCatching {
+            fused.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, null)
+                .addOnSuccessListener { loc -> loc?.let { handleLocations(listOf(it), ANCHOR_MAX_ACCURACY_M, force = true) } }
+                .addOnCompleteListener { then?.invoke() }
+        }.onFailure { then?.invoke() }
+    }
+
+    /** 멈췄다: 머무는 곳을 한 번 기록한 뒤 위치 업데이트를 끈다 */
+    private fun settleThenStill() {
+        captureNow { if (currentActivity == DetectedActivity.STILL && mode != Mode.Still) applyMode(Mode.Still) }
     }
 
     override fun onCreate() {
@@ -177,6 +190,8 @@ class TrackingService : LifecycleService() {
                 intervalMs = app.prefs.current().intervalMinutes * 60_000L
                 lastAcceptedAt = System.currentTimeMillis()
                 applyMode(Mode.Normal)
+                // 시작하자마자 지금 위치를 한 번 남긴다 (첫 정기 기록을 기다리지 않음)
+                captureNow()
                 startTransitions()
                 startWatchdog()
                 // 기록 중에 주기 설정을 바꾸면 바로 반영
@@ -256,8 +271,8 @@ class TrackingService : LifecycleService() {
         Mode.Retry -> Phase.Searching
     }
 
-    private fun handleLocations(locations: List<Location>) {
-        val good = locations.filter { it.hasAccuracy() && it.accuracy <= MAX_ACCURACY_M && it.time > lastSavedTime }
+    private fun handleLocations(locations: List<Location>, maxAccuracy: Float = MAX_ACCURACY_M, force: Boolean = false) {
+        val good = locations.filter { it.hasAccuracy() && it.accuracy <= maxAccuracy && it.time > lastSavedTime }
         if (good.isEmpty()) {
             checkOverdue()
             return
@@ -271,7 +286,7 @@ class TrackingService : LifecycleService() {
         val toSave = ArrayList<Location>()
         var last = lastSavedTime
         for (l in good.sortedBy { it.time }) {
-            if (l.time - last >= minGap || toSave.isEmpty() && mode == Mode.Retry) {
+            if (l.time - last >= minGap || toSave.isEmpty() && (mode == Mode.Retry || force)) {
                 toSave += l
                 last = l.time
             }
@@ -578,6 +593,8 @@ class TrackingService : LifecycleService() {
         const val STILL_RADIUS_M = 25f
         /** 이보다 오차가 큰 위치는 저장하지 않는다 */
         const val MAX_ACCURACY_M = 50f
+        /** 시작·출발·도착 지점은 실내(고층 건물 등)일 수 있어 조금 더 너그럽게 받는다 */
+        const val ANCHOR_MAX_ACCURACY_M = 150f
 
         fun start(context: Context) {
             ContextCompat.startForegroundService(context, Intent(context, TrackingService::class.java))

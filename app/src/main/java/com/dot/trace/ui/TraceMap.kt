@@ -45,8 +45,8 @@ import org.maplibre.geojson.Point
  * 지도: MapLibre + OpenFreeMap.
  * API 키·회원가입·결제 계정이 필요 없는 무료 지도. 지도 배경(타일)만 인터넷에서 받고, 위치 기록은 보내지 않는다.
  */
-private const val STYLE_DARK = "https://tiles.openfreemap.org/styles/dark"
-private const val STYLE_FALLBACK = "https://tiles.openfreemap.org/styles/liberty"
+private fun styleUrl(name: String) = "https://tiles.openfreemap.org/styles/$name"
+private const val STYLE_FALLBACK = "liberty"
 
 /** 화면(버튼 등)에서 지도 카메라를 움직이기 위한 손잡이 */
 class MapController {
@@ -72,6 +72,9 @@ class MapController {
     }
 
     fun focus(p: PointEntity) = fit(listOf(p))
+
+    fun focusAt(lat: Double, lng: Double) =
+        fit(listOf(PointEntity(time = 0, lat = lat, lng = lng, accuracy = null, altitude = null, speed = null)))
 }
 
 @Composable
@@ -83,6 +86,10 @@ fun TraceMap(
     modeOfPoint: Map<Long, TransportMode>,
     selectedTrip: Segment?,
     selected: PointEntity?,
+    /** 지도 스타일 이름 (liberty, bright, positron, fiord, dark) */
+    styleName: String,
+    /** '내 위치' 버튼으로 방금 잡은 현재 위치 (기록과 별개로 표시만) */
+    me: android.location.Location?,
     onPointClick: (PointEntity?) -> Unit,
     onReady: () -> Unit,
     modifier: Modifier = Modifier,
@@ -93,6 +100,7 @@ fun TraceMap(
     val currentOnClick by rememberUpdatedState(onPointClick)
     val currentOnReady by rememberUpdatedState(onReady)
     var style by remember { mutableStateOf<Style?>(null) }
+    var mapRef by remember { mutableStateOf<MapLibreMap?>(null) }
 
     val mapView = remember {
         MapLibre.getInstance(context)
@@ -118,9 +126,8 @@ fun TraceMap(
         }
     }
 
-    // 지도 준비: 스타일 → 우리 레이어 추가 → 탭 처리
+    // 지도 준비: 기본 설정과 탭 처리
     LaunchedEffect(mapView) {
-        var triedFallback = false
         mapView.getMapAsync { map ->
             map.uiSettings.apply {
                 isRotateGesturesEnabled = false
@@ -134,20 +141,6 @@ fun TraceMap(
             map.cameraPosition = org.maplibre.android.camera.CameraPosition.Builder()
                 .target(LatLng(37.5665, 126.9780)).zoom(11.0).build()
 
-            fun load(url: String) {
-                map.setStyle(Style.Builder().fromUri(url)) { s ->
-                    koreanLabels(s)
-                    addTraceLayers(s)
-                    controller.map = map
-                    style = s
-                    currentOnReady()
-                }
-            }
-            mapView.addOnDidFailLoadingMapListener {
-                if (!triedFallback) { triedFallback = true; load(STYLE_FALLBACK) }
-            }
-            load(STYLE_DARK)
-
             map.addOnMapClickListener { ll ->
                 val sp = map.projection.toScreenLocation(ll)
                 val r = 18f * context.resources.displayMetrics.density
@@ -156,12 +149,38 @@ fun TraceMap(
                 currentOnClick(id?.let { pid -> currentPoints.firstOrNull { it.id == pid } })
                 id != null
             }
+            mapRef = map
         }
     }
 
+    // 지도 스타일: 처음과 설정에서 바꿀 때마다 불러오고, 우리 레이어를 다시 얹는다
+    DisposableEffect(mapRef, styleName) {
+        val map = mapRef ?: return@DisposableEffect onDispose {}
+        var triedFallback = false
+        fun load(name: String) {
+            style = null
+            map.setStyle(Style.Builder().fromUri(styleUrl(name))) { s ->
+                koreanLabels(s)
+                addTraceLayers(s)
+                controller.map = map
+                style = s
+                currentOnReady()
+            }
+        }
+        val failListener = MapView.OnDidFailLoadingMapListener {
+            if (!triedFallback && styleName != STYLE_FALLBACK) { triedFallback = true; load(STYLE_FALLBACK) }
+        }
+        mapView.addOnDidFailLoadingMapListener(failListener)
+        load(styleName)
+        onDispose { mapView.removeOnDidFailLoadingMapListener(failListener) }
+    }
+
     // 데이터가 바뀌면 지도 위 선·점만 다시 그린다
-    LaunchedEffect(style, points, dots, moves, modeOfPoint, selectedTrip, selected) {
+    LaunchedEffect(style, points, dots, moves, modeOfPoint, selectedTrip, selected, me) {
         val s = style ?: return@LaunchedEffect
+        s.getSourceAs<GeoJsonSource>(SRC_ME)?.setGeoJson(
+            FeatureCollection.fromFeatures(listOfNotNull(me?.let { Feature.fromGeometry(Point.fromLngLat(it.longitude, it.latitude)) }))
+        )
         s.getSourceAs<GeoJsonSource>(SRC_BASE)?.setGeoJson(baseLine(points))
         s.getSourceAs<GeoJsonSource>(SRC_SEG)?.setGeoJson(segmentLines(moves, selectedTrip))
         s.getSourceAs<GeoJsonSource>(SRC_DOTS)?.setGeoJson(dotFeatures(dots, modeOfPoint, selectedTrip))
@@ -181,11 +200,12 @@ private const val SRC_SEG = "trace-seg-src"
 private const val SRC_DOTS = "trace-dots-src"
 private const val SRC_HEAD = "trace-head-src"
 private const val SRC_SEL = "trace-sel-src"
+private const val SRC_ME = "trace-me-src"
 
 private fun hex(c: Color) = String.format("#%06X", c.toArgb() and 0xFFFFFF)
 
 private fun addTraceLayers(s: Style) {
-    listOf(SRC_BASE, SRC_SEG, SRC_DOTS, SRC_HEAD, SRC_SEL).forEach { s.addSource(GeoJsonSource(it)) }
+    listOf(SRC_BASE, SRC_SEG, SRC_DOTS, SRC_HEAD, SRC_SEL, SRC_ME).forEach { s.addSource(GeoJsonSource(it)) }
 
     // 하루 전체 경로 (옅은 선)
     s.addLayer(LineLayer("trace-base", SRC_BASE).withProperties(
@@ -194,7 +214,14 @@ private fun addTraceLayers(s: Style) {
         PropertyFactory.lineWidth(2f),
         PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
     ))
-    // 이동 수단별 색 구간
+    // 이동 수단별 색 구간: 어두운 테두리 선을 먼저 깔아 밝은 지도에서도 또렷하게
+    s.addLayer(LineLayer("trace-seg-casing", SRC_SEG).withProperties(
+        PropertyFactory.lineColor(hex(Dot.Ink)),
+        PropertyFactory.lineOpacity(Expression.product(Expression.get("opacity"), Expression.literal(0.55f))),
+        PropertyFactory.lineWidth(Expression.sum(Expression.get("width"), Expression.literal(3f))),
+        PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
+        PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
+    ))
     s.addLayer(LineLayer("trace-seg", SRC_SEG).withProperties(
         PropertyFactory.lineColor(Expression.get("color")),
         PropertyFactory.lineOpacity(Expression.get("opacity")),
@@ -221,6 +248,18 @@ private fun addTraceLayers(s: Style) {
         PropertyFactory.circleColor("#FFFFFF"),
         PropertyFactory.circleRadius(7f),
         PropertyFactory.circleStrokeColor(hex(Dot.Lime)),
+        PropertyFactory.circleStrokeWidth(3f),
+    ))
+    // '내 위치' 버튼으로 잡은 현재 위치: 파란 점 + 옅은 원
+    s.addLayer(CircleLayer("trace-me-halo", SRC_ME).withProperties(
+        PropertyFactory.circleColor("#4DA3FF"),
+        PropertyFactory.circleOpacity(0.22f),
+        PropertyFactory.circleRadius(20f),
+    ))
+    s.addLayer(CircleLayer("trace-me", SRC_ME).withProperties(
+        PropertyFactory.circleColor("#4DA3FF"),
+        PropertyFactory.circleRadius(7f),
+        PropertyFactory.circleStrokeColor("#FFFFFF"),
         PropertyFactory.circleStrokeWidth(3f),
     ))
 }

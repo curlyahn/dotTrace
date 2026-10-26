@@ -126,6 +126,25 @@ fun SettingsScreen(
             }
         }
 
+        Section("지도")
+        Row(
+            Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 20.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Settings.MAP_STYLES.forEach { (key, label) ->
+                val on = settings.mapStyle == key
+                Text(
+                    label,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = if (on) Dot.OnLime else Dot.Text,
+                    modifier = Modifier.clip(RoundedCornerShape(50))
+                        .background(if (on) Dot.Lime else Dot.Surface2)
+                        .clickable { vm.setMapStyle(key) }
+                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                )
+            }
+        }
+
         Section("안정적으로 기록하기")
         StatusRow(
             title = "신체 활동 감지",

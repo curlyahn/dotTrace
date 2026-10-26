@@ -14,10 +14,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import com.dot.trace.trips.TransportMode
 
-/** 이동 수단별 색과 아이콘. 어두운 지도 위에서 색상뿐 아니라 밝기도 서로 달라 구분되도록 골랐다. */
+/** 이동 수단별 색과 아이콘. 지도 위에서는 테두리 선을 함께 그려 밝은·어두운 지도 모두에서 잘 보이게 한다. */
 object ModeStyle {
     fun color(m: TransportMode): Color = when (m) {
-        TransportMode.Walk -> Color(0xFFC9C9CE)
+        TransportMode.Walk -> Color(0xFF9A9AA4)
         TransportMode.Bicycle -> Color(0xFFD4FF3A)
         TransportMode.Bus -> Color(0xFF4DA3FF)
         TransportMode.Subway -> Color(0xFFB48CFF)

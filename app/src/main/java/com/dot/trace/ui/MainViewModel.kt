@@ -72,6 +72,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setInterval(minutes: Int) = viewModelScope.launch { app.prefs.setIntervalMinutes(minutes) }
 
+    fun setMapStyle(style: String) = viewModelScope.launch { app.prefs.setMapStyle(style) }
+
     suspend fun setTrackingEnabled(enabled: Boolean) = app.prefs.setTrackingEnabled(enabled)
 
     /** 선택한 날짜(또는 전체)를 GPX로 저장. 저장한 점 개수를 돌려준다. */

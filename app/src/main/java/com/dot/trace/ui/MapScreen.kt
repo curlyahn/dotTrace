@@ -99,6 +99,10 @@ fun MapScreen(
     val moves = remember(segments) { segments.filter { !it.stay } }
     var selectedTrip by remember { mutableStateOf<Segment?>(null) }
     val status by vm.status.collectAsStateWithLifecycle()
+    val settings by vm.settings.collectAsStateWithLifecycle()
+    // '내 위치' 버튼으로 잡은 현재 위치 (기록과 별개로 지도에만 표시)
+    var me by remember { mutableStateOf<android.location.Location?>(null) }
+    var locating by remember { mutableStateOf(false) }
 
     var selected by remember { mutableStateOf<PointEntity?>(null) }
     var showPicker by remember { mutableStateOf(false) }
@@ -149,6 +153,8 @@ fun MapScreen(
                 selected = p
                 if (p == null) selectedTrip = null
             },
+            styleName = settings.mapStyle,
+            me = me,
             onReady = { mapLoaded = true },
             modifier = Modifier.fillMaxSize(),
         )
@@ -178,10 +184,35 @@ fun MapScreen(
             horizontalAlignment = Alignment.End,
         ) {
             RoundIconButton(onClick = {
-                val target = points.lastOrNull() ?: latest
-                target?.let { controller.focus(it) }
+                // 지금 위치를 한 번 잡아 지도에 파란 점으로 보여 준다 (실내에서는 Wi-Fi 기반으로 수십 m 오차)
+                val granted = androidx.core.content.ContextCompat.checkSelfPermission(
+                    context, android.Manifest.permission.ACCESS_FINE_LOCATION,
+                ) == android.content.pm.PackageManager.PERMISSION_GRANTED ||
+                    androidx.core.content.ContextCompat.checkSelfPermission(
+                        context, android.Manifest.permission.ACCESS_COARSE_LOCATION,
+                    ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+                if (!granted) {
+                    android.widget.Toast.makeText(context, "위치 권한을 허용해 주세요", android.widget.Toast.LENGTH_SHORT).show()
+                    (points.lastOrNull() ?: latest)?.let { controller.focus(it) }
+                    return@RoundIconButton
+                }
+                if (locating) return@RoundIconButton
+                locating = true
+                android.widget.Toast.makeText(context, "현재 위치 찾는 중…", android.widget.Toast.LENGTH_SHORT).show()
+                currentLocation(context)
+                    .addOnSuccessListener { loc ->
+                        if (loc != null) {
+                            me = loc
+                            controller.focusAt(loc.latitude, loc.longitude)
+                            android.widget.Toast.makeText(context, "현재 위치 (오차 약 ${loc.accuracy.toInt()}m)", android.widget.Toast.LENGTH_SHORT).show()
+                        } else {
+                            android.widget.Toast.makeText(context, "위치를 찾지 못했어요. 휴대폰 위치 설정을 확인해 주세요", android.widget.Toast.LENGTH_LONG).show()
+                            (points.lastOrNull() ?: latest)?.let { controller.focus(it) }
+                        }
+                    }
+                    .addOnCompleteListener { locating = false }
             }) {
-                Icon(Icons.Rounded.MyLocation, contentDescription = "마지막 위치로", tint = Dot.Text)
+                Icon(Icons.Rounded.MyLocation, contentDescription = "현재 위치", tint = if (locating) Dot.Lime else Dot.Text)
             }
             Spacer(Modifier.height(12.dp))
             StatusCard(
@@ -275,6 +306,12 @@ private fun DatePill(
         }
     }
 }
+
+/** 지금 위치 한 번 (권한은 호출 전에 확인한다) */
+@android.annotation.SuppressLint("MissingPermission")
+private fun currentLocation(context: android.content.Context) =
+    com.google.android.gms.location.LocationServices.getFusedLocationProviderClient(context)
+        .getCurrentLocation(com.google.android.gms.location.Priority.PRIORITY_HIGH_ACCURACY, null)
 
 @Composable
 private fun RoundIconButton(onClick: () -> Unit, content: @Composable () -> Unit) {

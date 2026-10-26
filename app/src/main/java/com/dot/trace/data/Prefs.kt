@@ -16,10 +16,21 @@ data class Settings(
     val intervalMinutes: Int = DEFAULT_INTERVAL_MINUTES,
     /** 사용자가 기록을 켜 둔 상태인지. 재부팅·업데이트 후 자동 재시작 판단에 쓴다. */
     val trackingEnabled: Boolean = false,
+    /** 지도 스타일 (OpenFreeMap 스타일 이름) */
+    val mapStyle: String = DEFAULT_MAP_STYLE,
 ) {
     companion object {
         const val DEFAULT_INTERVAL_MINUTES = 1
         val INTERVAL_CHOICES = listOf(1, 2, 3, 5, 10, 15, 30)
+        const val DEFAULT_MAP_STYLE = "liberty"
+        /** OpenFreeMap이 제공하는 지도 스타일과 화면에 보일 이름 */
+        val MAP_STYLES = listOf(
+            "liberty" to "기본",
+            "bright" to "선명하게",
+            "positron" to "심플",
+            "fiord" to "차분하게",
+            "dark" to "어둡게",
+        )
     }
 }
 
@@ -29,12 +40,14 @@ class Prefs(context: Context) {
     private object K {
         val interval = intPreferencesKey("interval_minutes")
         val tracking = booleanPreferencesKey("tracking_enabled")
+        val mapStyle = androidx.datastore.preferences.core.stringPreferencesKey("map_style")
     }
 
     val settings: Flow<Settings> = ds.data.map { p ->
         Settings(
             intervalMinutes = (p[K.interval] ?: Settings.DEFAULT_INTERVAL_MINUTES).coerceIn(1, 120),
             trackingEnabled = p[K.tracking] ?: false,
+            mapStyle = p[K.mapStyle]?.takeIf { s -> Settings.MAP_STYLES.any { it.first == s } } ?: Settings.DEFAULT_MAP_STYLE,
         )
     }
 
@@ -43,4 +56,6 @@ class Prefs(context: Context) {
     suspend fun setIntervalMinutes(minutes: Int) = ds.edit { it[K.interval] = minutes.coerceIn(1, 120) }
 
     suspend fun setTrackingEnabled(enabled: Boolean) = ds.edit { it[K.tracking] = enabled }
+
+    suspend fun setMapStyle(style: String) = ds.edit { it[K.mapStyle] = style }
 }
