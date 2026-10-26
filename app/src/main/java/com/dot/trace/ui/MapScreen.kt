@@ -16,6 +16,8 @@ import androidx.compose.foundation.layout.windowInsetsTopHeight
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -644,40 +646,22 @@ private fun StatusCard(
                     }
                 }
             } else {
-                Row(verticalAlignment = Alignment.Bottom) {
-                    // 지점 수를 누르면 어디였는지 목록으로
-                    Row(
-                        Modifier.clip(RoundedCornerShape(12.dp)).clickable(enabled = pointCount > 0, onClick = onShowPoints),
-                        verticalAlignment = Alignment.Bottom,
-                    ) {
-                        Text("$pointCount", style = MaterialTheme.typography.displaySmall, color = Dot.Text)
-                        Text(" 지점", style = MaterialTheme.typography.titleMedium, color = Dot.Muted, modifier = Modifier.padding(bottom = 6.dp))
-                        if (pointCount > 0) {
-                            Icon(
-                                Icons.AutoMirrored.Rounded.KeyboardArrowRight,
-                                contentDescription = "지점 목록 보기",
-                                tint = Dot.Muted,
-                                modifier = Modifier.padding(bottom = 6.dp).size(20.dp),
-                            )
+                // 거리 | 지점 수 (구분선으로 나눈 두 칸)
+                Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
+                    Column(Modifier.weight(1f)) {
+                        Row(verticalAlignment = Alignment.Bottom) {
+                            Text("%.1f".format(Locale.US, distanceKm), style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Black, color = Dot.Text)
+                            Text(" km", style = MaterialTheme.typography.titleSmall, color = Dot.Muted, modifier = Modifier.padding(bottom = 5.dp))
                         }
+                        Text("이동 거리", style = MaterialTheme.typography.bodySmall, color = Dot.Muted)
                     }
-                    Spacer(Modifier.width(14.dp))
-                    Text("%.1f".format(Locale.US, distanceKm), style = MaterialTheme.typography.displaySmall, color = Dot.Text)
-                    Text(" km", style = MaterialTheme.typography.titleMedium, color = Dot.Muted, modifier = Modifier.padding(bottom = 6.dp))
-                    Spacer(Modifier.weight(1f))
-                    // 하루 타임라인 (머문 곳·이동 목록)
-                    Surface(
-                        onClick = onShowTimeline,
-                        enabled = pointCount > 0,
-                        shape = RoundedCornerShape(50),
-                        color = Dot.Surface2,
-                        modifier = Modifier.padding(bottom = 4.dp),
+                    Box(Modifier.padding(horizontal = 16.dp, vertical = 4.dp).width(1.dp).fillMaxHeight().background(Dot.Line))
+                    // 지점 수를 누르면 어디였는지 목록으로
+                    Column(
+                        Modifier.weight(1f).clip(RoundedCornerShape(12.dp)).clickable(enabled = pointCount > 0, onClick = onShowPoints),
                     ) {
-                        Row(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Rounded.Timeline, null, tint = if (pointCount > 0) Dot.Lime else Dot.Faint, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text("타임라인", style = MaterialTheme.typography.labelLarge, color = if (pointCount > 0) Dot.Text else Dot.Faint)
-                        }
+                        Text("$pointCount", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Black, color = Dot.Text)
+                        Text(if (pointCount > 0) "기록 지점 ›" else "기록 지점", style = MaterialTheme.typography.bodySmall, color = Dot.Muted)
                     }
                 }
             }
@@ -687,21 +671,39 @@ private fun StatusCard(
             }
             Spacer(Modifier.height(16.dp))
 
-            if (status.running) {
-                OutlinedButton(
-                    onClick = onStop,
-                    modifier = Modifier.fillMaxWidth().height(52.dp),
-                    shape = RoundedCornerShape(50),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, Dot.Coral),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Dot.Coral),
-                ) { Text("기록 정지", style = MaterialTheme.typography.labelLarge) }
-            } else {
+            // [타임라인] [기록 정지/시작] 반반 버튼
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                val canTimeline = pointCount > 0
                 Button(
-                    onClick = onStart,
-                    modifier = Modifier.fillMaxWidth().height(52.dp),
+                    onClick = onShowTimeline,
+                    enabled = canTimeline,
+                    modifier = Modifier.weight(1f).height(52.dp),
                     shape = RoundedCornerShape(50),
-                    colors = ButtonDefaults.buttonColors(containerColor = Dot.Lime, contentColor = Dot.OnLime),
-                ) { Text("기록 시작", style = MaterialTheme.typography.labelLarge) }
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Dot.Surface2, contentColor = Dot.Text,
+                        disabledContainerColor = Dot.Surface2, disabledContentColor = Dot.Faint,
+                    ),
+                ) {
+                    Icon(Icons.Rounded.Timeline, null, tint = if (canTimeline) Dot.Lime else Dot.Faint, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("타임라인", style = MaterialTheme.typography.labelLarge, maxLines = 1, softWrap = false)
+                }
+                if (status.running) {
+                    OutlinedButton(
+                        onClick = onStop,
+                        modifier = Modifier.weight(1f).height(52.dp),
+                        shape = RoundedCornerShape(50),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Dot.Coral),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Dot.Coral),
+                    ) { Text("기록 정지", style = MaterialTheme.typography.labelLarge, maxLines = 1, softWrap = false) }
+                } else {
+                    Button(
+                        onClick = onStart,
+                        modifier = Modifier.weight(1f).height(52.dp),
+                        shape = RoundedCornerShape(50),
+                        colors = ButtonDefaults.buttonColors(containerColor = Dot.Lime, contentColor = Dot.OnLime),
+                    ) { Text("기록 시작", style = MaterialTheme.typography.labelLarge, maxLines = 1, softWrap = false) }
+                }
             }
         }
     }
