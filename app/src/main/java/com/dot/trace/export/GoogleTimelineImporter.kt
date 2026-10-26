@@ -190,10 +190,13 @@ class GoogleTimelineImporter(
         batch.sortBy { it.time }
         val existing = dao.timesBetween(batch.first().time - 60_000, batch.last().time + 60_000)
         val keep = ArrayList<PointEntity>(batch.size)
-        var lastKept = Long.MIN_VALUE
+        // 이번 묶음에서 마지막으로 남긴 시각. (Long.MIN_VALUE로 두고 빼면 숫자가 넘쳐 모두 중복으로 판정되므로 null로 시작)
+        var lastKept: Long? = null
         for (p in batch) {
             val near = nearest(existing, p.time)
-            if ((near != null && kotlin.math.abs(near - p.time) < 60_000) || p.time - lastKept < 15_000) {
+            val dupExisting = near != null && kotlin.math.abs(near - p.time) < 60_000
+            val dupInBatch = lastKept != null && p.time - lastKept < 15_000
+            if (dupExisting || dupInBatch) {
                 skipped++
                 continue
             }
