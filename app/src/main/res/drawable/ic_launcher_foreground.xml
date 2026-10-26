@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 108dp 캔버스, 가운데 66dp 안전 영역: 점선으로 이어진 발자취 끝에 라임색 현재 위치 점 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- 지나온 길 (흐린 점들) -->
+    <path
+        android:fillColor="#55555A"
+        android:pathData="M36,70a3,3 0,1 1,0 6a3,3 0,1 1,0 -6z" />
+    <path
+        android:fillColor="#8B8B90"
+        android:pathData="M44,61a3.5,3.5 0,1 1,0 7a3.5,3.5 0,1 1,0 -7z" />
+    <path
+        android:fillColor="#B9B9BC"
+        android:pathData="M48,49a4,4 0,1 1,0 8a4,4 0,1 1,0 -8z" />
+    <!-- 현재 위치 -->
+    <path
+        android:fillColor="#D4FF3A"
+        android:pathData="M64,30a10,10 0,1 1,0 20a10,10 0,1 1,0 -20z" />
+</vector>
