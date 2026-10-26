@@ -157,7 +157,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _date.value = if (d.isAfter(today)) today else d
     }
 
-    fun shiftDate(days: Long) = selectDate(_date.value.plusDays(days))
+    /**
+     * 전날·다음날로 이동. 그날 기록이 없으면 기록이 있는 가장 가까운 날로 건너뛴다
+     * (가져온 구글 기록처럼 듬성듬성한 과거 기록을 하루씩 넘기지 않아도 되게).
+     */
+    fun shiftDate(days: Long) = viewModelScope.launch {
+        val cur = _date.value
+        val target = cur.plusDays(days)
+        if (dao.countBetween(startOf(target), startOf(target.plusDays(1))) > 0) {
+            selectDate(target)
+            return@launch
+        }
+        val jump = if (days < 0) dao.lastBefore(startOf(cur)) else dao.firstFrom(startOf(cur.plusDays(1)))
+        selectDate(jump?.let { java.time.Instant.ofEpochMilli(it).atZone(zone).toLocalDate() } ?: target)
+    }
+
+    fun selectDateOf(epochMs: Long) = selectDate(java.time.Instant.ofEpochMilli(epochMs).atZone(zone).toLocalDate())
 
     fun setInterval(minutes: Int) = viewModelScope.launch { app.prefs.setIntervalMinutes(minutes) }
 

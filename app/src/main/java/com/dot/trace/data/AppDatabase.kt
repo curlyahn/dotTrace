@@ -77,6 +77,14 @@ interface PointDao {
     @Query("SELECT COUNT(*) FROM points WHERE time >= :from AND time < :to")
     suspend fun countBetween(from: Long, to: Long): Int
 
+    /** 이 시각 이전의 마지막 기록 시각 (기록 있는 날로 건너뛰기) */
+    @Query("SELECT MAX(time) FROM points WHERE time < :t")
+    suspend fun lastBefore(t: Long): Long?
+
+    /** 이 시각 이후의 첫 기록 시각 */
+    @Query("SELECT MIN(time) FROM points WHERE time >= :t")
+    suspend fun firstFrom(t: Long): Long?
+
     @Query("DELETE FROM points WHERE time >= :from AND time < :to")
     suspend fun deleteBetween(from: Long, to: Long): Int
 }

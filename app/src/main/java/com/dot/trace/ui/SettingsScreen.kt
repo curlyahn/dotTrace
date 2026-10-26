@@ -250,8 +250,17 @@ fun SettingsScreen(
                     }
                 }
             },
+            dismissButton = {
+                if (!st.running && st.to != null && st.added > 0) TextButton(onClick = { vm.dismissImport() }) { Text("닫기") }
+            },
             confirmButton = {
                 if (st.running) TextButton(onClick = { vm.cancelImport() }) { Text("멈추기", color = Dot.Coral) }
+                else if (st.to != null && st.added > 0) TextButton(onClick = {
+                    // 가져온 기록 중 가장 최근 날을 지도에서 바로 보기
+                    vm.selectDateOf(st.to)
+                    vm.dismissImport()
+                    onBack()
+                }) { Text("지도에서 보기") }
                 else TextButton(onClick = { vm.dismissImport() }) { Text("확인") }
             },
             containerColor = Dot.Surface,
