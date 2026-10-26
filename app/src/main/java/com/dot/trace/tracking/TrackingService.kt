@@ -17,6 +17,8 @@ import android.hardware.TriggerEvent
 import android.hardware.TriggerEventListener
 import android.location.Location
 import android.location.LocationManager
+import android.net.wifi.WifiManager
+import android.os.SystemClock
 import android.os.Build
 import android.os.Looper
 import androidx.core.app.NotificationCompat
@@ -88,6 +90,10 @@ class TrackingService : LifecycleService() {
     private var retryIntervalMs = RETRY_INTERVAL_MS
     /** 빠른 이동 모드에서 속도가 느려지기 시작한 시각 */
     private var slowSince = 0L
+    /** OS 활동 인식이 마지막으로 알려 준 활동 (DetectedActivity 상수) */
+    private var currentActivity: Int? = null
+    /** 신호를 잃기 직전 마지막으로 저장한 시각. 다시 잡힌 첫 위치에 '끊겨 있던 시간'을 남긴다 */
+    private var lostSince = 0L
     private var watchdog: Job? = null
     private var transitionsOn = false
     private val sensors by lazy { getSystemService(SensorManager::class.java) }
@@ -118,11 +124,26 @@ class TrackingService : LifecycleService() {
         override fun onReceive(context: Context, intent: Intent) {
             if (!ActivityTransitionResult.hasResult(intent)) return
             val last = ActivityTransitionResult.extractResult(intent)?.transitionEvents?.lastOrNull() ?: return
-            if (last.activityType != DetectedActivity.STILL) return
-            if (last.transitionType == ActivityTransition.ACTIVITY_TRANSITION_ENTER) {
-                if (mode != Mode.Still) applyMode(Mode.Still)
-            } else if (mode == Mode.Still) {
-                resumeMoving()
+            val enter = last.transitionType == ActivityTransition.ACTIVITY_TRANSITION_ENTER
+            when (last.activityType) {
+                DetectedActivity.STILL -> if (enter) {
+                    currentActivity = DetectedActivity.STILL
+                    if (mode != Mode.Still) applyMode(Mode.Still)
+                } else {
+                    currentActivity = null
+                    if (mode == Mode.Still) resumeMoving()
+                }
+                // 차량·자전거에 탔다: 15초 주기로 바꿔 정차 패턴과 부드러운 경로를 남긴다
+                DetectedActivity.IN_VEHICLE, DetectedActivity.ON_BICYCLE -> if (enter) {
+                    currentActivity = last.activityType
+                    if (mode == Mode.Still) resumeMoving()
+                    if (mode == Mode.Normal && intervalMs > FAST_INTERVAL_MS) applyMode(Mode.Fast)
+                }
+                DetectedActivity.WALKING, DetectedActivity.RUNNING -> if (enter) {
+                    currentActivity = last.activityType
+                    if (mode == Mode.Still) resumeMoving()
+                    if (mode == Mode.Fast) applyMode(Mode.Normal)
+                }
             }
         }
     }
@@ -186,6 +207,7 @@ class TrackingService : LifecycleService() {
         if (newMode == Mode.Retry && mode != Mode.Retry) {
             retryStartedAt = now
             retryIntervalMs = RETRY_INTERVAL_MS
+            lostSince = lastSavedTime
         }
         if (newMode == Mode.Fast && mode != Mode.Fast) slowSince = 0L
         if (newMode != mode) modeSince = now
@@ -259,7 +281,8 @@ class TrackingService : LifecycleService() {
         lastAcceptedAt = System.currentTimeMillis()
 
         lifecycleScope.launch {
-            toSave.forEach { l ->
+            toSave.forEachIndexed { i, l ->
+                val isNewest = i == toSave.lastIndex
                 app.db.points().insert(
                     PointEntity(
                         time = l.time,
@@ -268,11 +291,19 @@ class TrackingService : LifecycleService() {
                         accuracy = l.accuracy,
                         altitude = if (l.hasAltitude()) l.altitude else null,
                         speed = if (l.hasSpeed()) l.speed else null,
+                        activity = activity,
+                        // 와이파이는 지금 시점 것이므로 가장 최근 위치에만 붙인다
+                        wifi = if (isNewest) wifiSnap?.bssids else null,
+                        transitWifi = isNewest && wifiSnap?.transit == true,
+                        lostMs = if (i == 0) lost else null,
                     )
                 )
             }
         }
         val prevSaved = lastSavedLocation
+        val lost = if (mode == Mode.Retry && lostSince > 0) (toSave.first().time - lostSince).coerceAtLeast(0) else null
+        val wifiSnap = wifiSnapshot()
+        val activity = currentActivity
         val newest = toSave.last()
         lastSavedLocation = newest
         updateStatus { it.copy(lastFixAt = newest.time, lastAccuracy = newest.accuracy) }
@@ -285,8 +316,10 @@ class TrackingService : LifecycleService() {
                 else detectStill(toSave)
             }
             Mode.Fast -> {
-                // 느려진 상태가 2분 넘게 이어지면 원래 주기로 (신호 대기 등으로 잠깐 멈춘 건 무시)
-                if (speed < FAST_EXIT_MPS) {
+                // 느려진 상태가 2분 넘게 이어지면 원래 주기로 (신호 대기 등으로 잠깐 멈춘 건 무시).
+                // 활동 인식이 아직 차량·자전거라고 하면(버스 정류장, 정체) 15초 주기를 유지한다.
+                val riding = currentActivity == DetectedActivity.IN_VEHICLE || currentActivity == DetectedActivity.ON_BICYCLE
+                if (speed < FAST_EXIT_MPS && !riding) {
                     if (slowSince == 0L) slowSince = newest.time
                     if (newest.time - slowSince >= FAST_EXIT_AFTER_MS) applyMode(Mode.Normal)
                 } else {
@@ -298,6 +331,23 @@ class TrackingService : LifecycleService() {
     }
 
     private var lastSavedLocation: Location? = null
+
+    private class WifiSnap(val bssids: String?, val transit: Boolean)
+
+    /**
+     * OS가 이미 해 둔 와이파이 검색 결과만 읽는다 (새로 검색하지 않아 전력을 쓰지 않음).
+     * 2분 이내 결과 중 신호가 센 공유기 5개와, 대중교통 공공 와이파이 이름이 있었는지.
+     */
+    @Suppress("DEPRECATION")
+    private fun wifiSnapshot(): WifiSnap? = runCatching {
+        val wm = applicationContext.getSystemService(WifiManager::class.java) ?: return null
+        val nowUs = SystemClock.elapsedRealtime() * 1000
+        val fresh = wm.scanResults.filter { nowUs - it.timestamp < 120_000_000L }
+        if (fresh.isEmpty()) return null
+        val top = fresh.sortedByDescending { it.level }.take(5).joinToString(",") { it.BSSID }
+        val transit = fresh.any { r -> TRANSIT_SSID.containsMatchIn(r.SSID ?: "") }
+        WifiSnap(top, transit)
+    }.getOrNull()
 
     /** 이번에 받은 위치들의 속도(m/s). GPS가 준 속도가 있으면 그것을, 없으면 위치 변화로 계산 */
     private fun estimateSpeed(prev: Location?, added: List<Location>): Float {
@@ -393,12 +443,17 @@ class TrackingService : LifecycleService() {
         ) return // 권한이 없으면 정지 감지 없이 항상 정상 주기로 기록
 
         ContextCompat.registerReceiver(this, transitionReceiver, IntentFilter(ACTION_TRANSITION), ContextCompat.RECEIVER_NOT_EXPORTED)
+        fun t(type: Int, transition: Int) =
+            ActivityTransition.Builder().setActivityType(type).setActivityTransition(transition).build()
+        val enter = ActivityTransition.ACTIVITY_TRANSITION_ENTER
         val request = ActivityTransitionRequest(
             listOf(
-                ActivityTransition.Builder().setActivityType(DetectedActivity.STILL)
-                    .setActivityTransition(ActivityTransition.ACTIVITY_TRANSITION_ENTER).build(),
-                ActivityTransition.Builder().setActivityType(DetectedActivity.STILL)
-                    .setActivityTransition(ActivityTransition.ACTIVITY_TRANSITION_EXIT).build(),
+                t(DetectedActivity.STILL, enter),
+                t(DetectedActivity.STILL, ActivityTransition.ACTIVITY_TRANSITION_EXIT),
+                t(DetectedActivity.WALKING, enter),
+                t(DetectedActivity.RUNNING, enter),
+                t(DetectedActivity.ON_BICYCLE, enter),
+                t(DetectedActivity.IN_VEHICLE, enter),
             )
         )
         runCatching {
@@ -508,6 +563,9 @@ class TrackingService : LifecycleService() {
         const val FAST_ENTER_MPS = 30f / 3.6f
         const val FAST_EXIT_MPS = 20f / 3.6f
         const val FAST_EXIT_AFTER_MS = 2 * 60_000L
+
+        /** 버스·지하철·기차 공공 와이파이로 흔히 쓰이는 이름 */
+        private val TRANSIT_SSID = Regex("public ?wi-?fi|bus|metro|subway|korail|t wifi zone|wifi@", RegexOption.IGNORE_CASE)
 
         fun retryLabel(ms: Long?): String = when {
             ms == null || ms < 60_000L -> "${(ms ?: RETRY_INTERVAL_MS) / 1000}초"

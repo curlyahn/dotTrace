@@ -1,6 +1,7 @@
 package com.dot.trace.data
 
 import android.content.Context
+import androidx.room.ColumnInfo
 import androidx.room.Dao
 import androidx.room.Database
 import androidx.room.Entity
@@ -10,6 +11,8 @@ import androidx.room.PrimaryKey
 import androidx.room.Query
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import kotlinx.coroutines.flow.Flow
 
 /** 한 번 기록한 위치. 모든 데이터는 이 기기의 DB에만 저장된다. */
@@ -25,6 +28,14 @@ data class PointEntity(
     val altitude: Double?,
     /** 속도 (m/s) */
     val speed: Float?,
+    /** 이 위치를 잡을 때 OS 활동 인식이 알려 준 활동 (DetectedActivity 상수, 모르면 null) */
+    val activity: Int? = null,
+    /** 그때 보이던 와이파이 공유기(BSSID) 최대 5개, 쉼표로 구분. 함께 이동하는 와이파이를 찾는 데 쓴다 */
+    val wifi: String? = null,
+    /** 대중교통 공공 와이파이로 보이는 이름이 있었는지 */
+    @ColumnInfo(defaultValue = "0") val transitWifi: Boolean = false,
+    /** 위치 신호가 끊겼다가 다시 잡힌 위치라면, 끊겨 있던 시간 (ms) */
+    val lostMs: Long? = null,
 )
 
 @Dao
@@ -48,7 +59,7 @@ interface PointDao {
     suspend fun deleteBetween(from: Long, to: Long): Int
 }
 
-@Database(entities = [PointEntity::class], version = 1, exportSchema = false)
+@Database(entities = [PointEntity::class], version = 2, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun points(): PointDao
 
@@ -57,8 +68,19 @@ abstract class AppDatabase : RoomDatabase() {
 
         fun get(context: Context): AppDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(context.applicationContext, AppDatabase::class.java, "dottrace.db")
+                .addMigrations(MIGRATION_1_2)
                 .build()
                 .also { instance = it }
+        }
+
+        /** 이동 수단 추정용 정보 추가 (기존 기록은 그대로 둔다) */
+        private val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE points ADD COLUMN activity INTEGER")
+                db.execSQL("ALTER TABLE points ADD COLUMN wifi TEXT")
+                db.execSQL("ALTER TABLE points ADD COLUMN transitWifi INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE points ADD COLUMN lostMs INTEGER")
+            }
         }
     }
 }

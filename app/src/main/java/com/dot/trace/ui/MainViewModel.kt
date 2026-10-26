@@ -10,12 +10,15 @@ import com.dot.trace.data.Settings
 import com.dot.trace.export.GpxExporter
 import com.dot.trace.tracking.Tracker
 import com.dot.trace.tracking.TrackerStatus
+import com.dot.trace.trips.Segment
+import com.dot.trace.trips.TripClassifier
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -24,6 +27,8 @@ import java.time.LocalDate
 import java.time.ZoneId
 
 data class DayPoints(val date: LocalDate?, val points: List<PointEntity>)
+
+data class DayTrips(val date: LocalDate?, val segments: List<Segment>)
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -41,6 +46,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val day: StateFlow<DayPoints> = _date
         .flatMapLatest { d -> dao.observeBetween(startOf(d), startOf(d.plusDays(1))).map { DayPoints(d, it) } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), DayPoints(null, emptyList()))
+
+    /** 선택한 날짜를 머무름·이동 구간으로 나누고 이동 수단을 추정한 결과 */
+    val trips: StateFlow<DayTrips> = day
+        .map { d -> DayTrips(d.date, TripClassifier.classify(d.points)) }
+        .flowOn(Dispatchers.Default)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), DayTrips(null, emptyList()))
 
     val latest: StateFlow<PointEntity?> = dao.observeLatest()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)

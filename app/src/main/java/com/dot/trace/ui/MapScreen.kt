@@ -21,6 +21,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -67,6 +69,8 @@ import com.dot.trace.data.PointEntity
 import com.dot.trace.tracking.Phase
 import com.dot.trace.tracking.TrackerStatus
 import com.dot.trace.tracking.TrackingService
+import com.dot.trace.trips.Segment
+import com.dot.trace.trips.TransportMode
 import com.dot.trace.ui.theme.Dot
 import com.google.android.gms.maps.CameraUpdateFactory
 import com.google.android.gms.maps.model.BitmapDescriptor
@@ -112,6 +116,10 @@ fun MapScreen(
     // 날짜를 막 바꿨을 때 이전 날짜의 목록이 잠깐 보이지 않도록
     val points = if (day.date == date) day.points else emptyList()
     val latest by vm.latest.collectAsStateWithLifecycle()
+    val tripsState by vm.trips.collectAsStateWithLifecycle()
+    val segments = if (tripsState.date == date) tripsState.segments else emptyList()
+    val moves = remember(segments) { segments.filter { !it.stay } }
+    var selectedTrip by remember { mutableStateOf<Segment?>(null) }
     val status by vm.status.collectAsStateWithLifecycle()
 
     var selected by remember { mutableStateOf<PointEntity?>(null) }
@@ -129,7 +137,25 @@ fun MapScreen(
     val dots = remember(points) { thinOut(points, minDistanceM = 15f) }
     val distanceKm = remember(points) { distanceKm(points) }
 
-    LaunchedEffect(date) { selected = null }
+    LaunchedEffect(date) { selected = null; selectedTrip = null }
+
+    // 각 위치가 어느 이동 수단 구간에 속하는지 (점 색칠용)
+    val modeOfPoint = remember(moves) {
+        HashMap<Long, TransportMode>().apply { moves.forEach { m -> m.points.forEach { put(it.id, m.mode) } } }
+    }
+
+    fun fit(pts: List<PointEntity>) {
+        if (pts.isEmpty()) return
+        scope.launch {
+            val ll = pts.map { LatLng(it.lat, it.lng) }
+            if (ll.distinct().size == 1) {
+                cameraState.animate(CameraUpdateFactory.newLatLngZoom(ll.first(), 16f))
+            } else {
+                val b = LatLngBounds.builder().apply { ll.forEach { include(it) } }.build()
+                cameraState.animate(CameraUpdateFactory.newLatLngBounds(b, with(density) { 48.dp.roundToPx() }))
+            }
+        }
+    }
 
     // 날짜를 바꾸면(또는 그날 첫 기록이 생기면) 그날의 경로가 모두 보이게 카메라를 맞춘다
     LaunchedEffect(mapLoaded, day.date, points.isNotEmpty()) {
@@ -162,29 +188,44 @@ fun MapScreen(
                 tiltGesturesEnabled = false,
             ),
             // 위·아래 떠 있는 카드에 지도 로고와 경로가 가리지 않도록
-            contentPadding = PaddingValues(top = 96.dp, bottom = 230.dp),
+            contentPadding = PaddingValues(top = 96.dp, bottom = if (moves.isEmpty()) 230.dp else 300.dp),
             onMapLoaded = { mapLoaded = true },
-            onMapClick = { selected = null },
+            onMapClick = { selected = null; selectedTrip = null },
         ) {
-            val dotIcon = remember { dotDescriptor(Dot.Lime.copy(alpha = 0.85f), Dot.Ink, 9, density.density) }
+            val dotIcons = remember {
+                TransportMode.entries.associateWith { dotDescriptor(ModeStyle.color(it).copy(alpha = 0.9f), Dot.Ink, 9, density.density) }
+            }
+            val dimIcon = remember { dotDescriptor(Dot.Faint, Dot.Ink, 7, density.density) }
             val headIcon = remember { dotDescriptor(Dot.Lime, Dot.Ink, 18, density.density) }
             val selectedIcon = remember { dotDescriptor(Color.White, Dot.Lime, 16, density.density) }
 
+            // 하루 전체를 옅은 선으로 깔고, 그 위에 이동 수단별 색으로 구간을 칠한다
             if (path.size >= 2) {
                 Polyline(
                     points = path,
-                    color = Dot.Lime.copy(alpha = 0.55f),
-                    width = with(density) { 3.dp.toPx() },
+                    color = Dot.Muted.copy(alpha = 0.35f),
+                    width = with(density) { 2.dp.toPx() },
+                    jointType = JointType.ROUND,
+                )
+            }
+            moves.forEach { m ->
+                val dim = selectedTrip != null && selectedTrip != m
+                Polyline(
+                    points = m.points.map { LatLng(it.lat, it.lng) },
+                    color = ModeStyle.color(m.mode).copy(alpha = if (dim) 0.2f else 0.8f),
+                    width = with(density) { (if (selectedTrip == m) 5.dp else 3.5.dp).toPx() },
                     jointType = JointType.ROUND,
                     startCap = RoundCap(),
                     endCap = RoundCap(),
+                    zIndex = if (selectedTrip == m) 1f else 0.5f,
                 )
             }
             dots.forEach { p ->
                 key(p.id) {
                     Marker(
                         state = remember { MarkerState(LatLng(p.lat, p.lng)) },
-                        icon = dotIcon,
+                        icon = modeOfPoint[p.id]?.takeIf { selectedTrip == null || selectedTrip!!.points.any { q -> q.id == p.id } }
+                            ?.let { dotIcons[it] } ?: dimIcon,
                         anchor = Offset(0.5f, 0.5f),
                         zIndex = 1f,
                         onClick = { selected = p; true },
@@ -250,6 +291,13 @@ fun MapScreen(
                 distanceKm = distanceKm,
                 selected = selected,
                 onClearSelected = { selected = null },
+                trips = moves,
+                selectedTrip = selectedTrip,
+                onSelectTrip = { t ->
+                    selected = null
+                    selectedTrip = if (selectedTrip == t) null else t
+                    fit(if (selectedTrip == null) points else t.points)
+                },
                 onStart = onStart,
                 onStop = onStop,
             )
@@ -349,6 +397,9 @@ private fun StatusCard(
     distanceKm: Double,
     selected: PointEntity?,
     onClearSelected: () -> Unit,
+    trips: List<Segment>,
+    selectedTrip: Segment?,
+    onSelectTrip: (Segment) -> Unit,
     onStart: () -> Unit,
     onStop: () -> Unit,
 ) {
@@ -410,6 +461,10 @@ private fun StatusCard(
                     Text(" km", style = MaterialTheme.typography.titleMedium, color = Dot.Muted, modifier = Modifier.padding(bottom = 6.dp))
                 }
             }
+            if (trips.isNotEmpty() && selected == null) {
+                Spacer(Modifier.height(14.dp))
+                TripStrip(trips, selectedTrip, onSelectTrip)
+            }
             Spacer(Modifier.height(16.dp))
 
             if (status.running) {
@@ -427,6 +482,43 @@ private fun StatusCard(
                     shape = RoundedCornerShape(50),
                     colors = ButtonDefaults.buttonColors(containerColor = Dot.Lime, contentColor = Dot.OnLime),
                 ) { Text("기록 시작", style = MaterialTheme.typography.labelLarge) }
+            }
+        }
+    }
+}
+
+/** 하루의 이동을 시간순 칩으로: 아이콘 · 수단 · 시각 · 거리. 탭하면 그 구간만 강조 */
+@Composable
+private fun TripStrip(trips: List<Segment>, selected: Segment?, onSelect: (Segment) -> Unit) {
+    val fmt = remember { SimpleDateFormat("HH:mm", Locale.KOREA) }
+    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        items(trips, key = { it.start }) { t ->
+            val on = selected == t
+            val c = ModeStyle.color(t.mode)
+            Surface(
+                onClick = { onSelect(t) },
+                shape = RoundedCornerShape(16.dp),
+                color = if (on) Dot.Surface2 else Dot.Ink.copy(alpha = 0.5f),
+                border = androidx.compose.foundation.BorderStroke(1.dp, if (on) c else Dot.Line),
+            ) {
+                Row(Modifier.padding(start = 10.dp, end = 12.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(30.dp).clip(CircleShape).background(c.copy(alpha = 0.18f)), contentAlignment = Alignment.Center) {
+                        Icon(ModeStyle.icon(t.mode), contentDescription = null, tint = c, modifier = Modifier.size(18.dp))
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    Column {
+                        Text(
+                            "${t.mode.label} · ${"%.1f".format(Locale.US, t.distanceM / 1000)}km",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = Dot.Text,
+                        )
+                        Text(
+                            "${fmt.format(Date(t.start))}–${fmt.format(Date(t.end))}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Dot.Muted,
+                        )
+                    }
+                }
             }
         }
     }
