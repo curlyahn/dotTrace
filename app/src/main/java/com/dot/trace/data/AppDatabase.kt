@@ -36,12 +36,31 @@ data class PointEntity(
     @ColumnInfo(defaultValue = "0") val transitWifi: Boolean = false,
     /** 위치 신호가 끊겼다가 다시 잡힌 위치라면, 끊겨 있던 시간 (ms) */
     val lostMs: Long? = null,
-)
+    /** 어디서 온 기록인지: 0 = DotTrace가 기록, 1 = 구글 타임라인에서 가져옴 */
+    @ColumnInfo(defaultValue = "0") val source: Int = SOURCE_DOTTRACE,
+) {
+    companion object {
+        const val SOURCE_DOTTRACE = 0
+        const val SOURCE_GOOGLE = 1
+    }
+}
 
 @Dao
 interface PointDao {
     @Insert
     suspend fun insert(point: PointEntity): Long
+
+    @Insert
+    suspend fun insertAll(points: List<PointEntity>)
+
+    @Query("SELECT time FROM points WHERE time >= :from AND time <= :to ORDER BY time")
+    suspend fun timesBetween(from: Long, to: Long): List<Long>
+
+    @Query("SELECT COUNT(*) FROM points WHERE source = :source")
+    fun observeCountBySource(source: Int): Flow<Int>
+
+    @Query("DELETE FROM points WHERE source = :source")
+    suspend fun deleteBySource(source: Int): Int
 
     @Query("SELECT * FROM points WHERE time >= :from AND time < :to ORDER BY time")
     fun observeBetween(from: Long, to: Long): Flow<List<PointEntity>>
@@ -103,7 +122,7 @@ interface PlaceDao {
     suspend fun delete(id: Long)
 }
 
-@Database(entities = [PointEntity::class, PlaceEntity::class], version = 3, exportSchema = false)
+@Database(entities = [PointEntity::class, PlaceEntity::class], version = 4, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun points(): PointDao
     abstract fun places(): PlaceDao
@@ -113,7 +132,7 @@ abstract class AppDatabase : RoomDatabase() {
 
         fun get(context: Context): AppDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(context.applicationContext, AppDatabase::class.java, "dottrace.db")
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                 .build()
                 .also { instance = it }
         }
@@ -136,6 +155,13 @@ abstract class AppDatabase : RoomDatabase() {
                         "id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, kind TEXT NOT NULL, name TEXT NOT NULL, " +
                         "lat REAL NOT NULL, lng REAL NOT NULL, radius REAL NOT NULL DEFAULT 150)"
                 )
+            }
+        }
+
+        /** 기록 출처(구글 타임라인 가져오기 구분) 추가 */
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE points ADD COLUMN source INTEGER NOT NULL DEFAULT 0")
             }
         }
     }

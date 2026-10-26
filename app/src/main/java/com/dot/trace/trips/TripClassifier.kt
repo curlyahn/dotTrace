@@ -11,7 +11,29 @@ enum class TransportMode(val label: String) {
     Subway("지하철"),
     Car("자가용"),
     Train("기차"),
+    Flight("비행기"),
     Unknown("이동"),
+}
+
+/**
+ * 구글 타임라인처럼 이동 수단이 정해져 들어온 기록에 붙이는 활동 코드.
+ * OS 활동 인식 값(DetectedActivity: 0~8)과 겹치지 않게 100부터 쓴다.
+ */
+object ActivityCode {
+    const val BUS = 100
+    const val SUBWAY = 101
+    const val TRAIN = 102
+    const val FLIGHT = 103
+    const val CAR = 104
+
+    fun mode(code: Int): TransportMode? = when (code) {
+        BUS -> TransportMode.Bus
+        SUBWAY -> TransportMode.Subway
+        TRAIN -> TransportMode.Train
+        FLIGHT -> TransportMode.Flight
+        CAR -> TransportMode.Car
+        else -> null
+    }
 }
 
 /** 하루 기록을 나눈 한 구간: 머무름 또는 한 가지 수단으로 한 이동 */
@@ -98,6 +120,7 @@ object TripClassifier {
             when (act) {
                 DetectedActivity.WALKING, DetectedActivity.RUNNING, DetectedActivity.ON_FOOT -> kmh < 15
                 DetectedActivity.IN_VEHICLE, DetectedActivity.ON_BICYCLE -> false
+                in 100..199 -> false // 버스·지하철 등 정해진 이동 수단
                 else -> kmh < WALK_MAX_KMH && (b.lostMs ?: 0L) == 0L
             }
         }
@@ -171,7 +194,13 @@ object TripClassifier {
         val transitWifi = p.count { it.transitWifi } >= 2
         val stopsPerKm = countStops(p) / distKm.coerceAtLeast(0.3)
 
+        // 이동 수단이 이미 정해져 들어온 기록(구글 타임라인 가져오기)은 그대로 따른다
+        acts.filterKeys { ActivityCode.mode(it) != null }.maxByOrNull { it.value }?.let { (code, n) ->
+            if (n.toDouble() / actTotal >= 0.5) return ActivityCode.mode(code)!!
+        }
+
         return when {
+            avg >= 250 -> TransportMode.Flight
             avg >= 110 || max >= 170 -> TransportMode.Train
             gapFrac >= 0.35 && avg in 15.0..90.0 -> TransportMode.Subway
             movingWifi && gapFrac >= 0.15 -> TransportMode.Subway

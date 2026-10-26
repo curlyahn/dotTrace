@@ -8,6 +8,7 @@ import androidx.compose.material.icons.rounded.DirectionsBus
 import androidx.compose.material.icons.rounded.DirectionsCar
 import androidx.compose.material.icons.rounded.DirectionsSubway
 import androidx.compose.material.icons.rounded.DirectionsWalk
+import androidx.compose.material.icons.rounded.Flight
 import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material.icons.rounded.Train
 import androidx.compose.ui.graphics.Color
@@ -23,6 +24,7 @@ object ModeStyle {
         TransportMode.Subway -> Color(0xFFB48CFF)
         TransportMode.Car -> Color(0xFFFF9F43)
         TransportMode.Train -> Color(0xFFFF6FB5)
+        TransportMode.Flight -> Color(0xFF3FD9C8)
         TransportMode.Unknown -> Color(0xFF8B8B90)
     }
 
@@ -33,6 +35,7 @@ object ModeStyle {
         TransportMode.Subway -> Icons.Rounded.DirectionsSubway
         TransportMode.Car -> Icons.Rounded.DirectionsCar
         TransportMode.Train -> Icons.Rounded.Train
+        TransportMode.Flight -> Icons.Rounded.Flight
         TransportMode.Unknown -> Icons.Rounded.MoreHoriz
     }
 }

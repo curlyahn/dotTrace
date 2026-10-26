@@ -8,6 +8,7 @@ import com.dot.trace.TraceApp
 import com.dot.trace.data.PlaceEntity
 import com.dot.trace.data.PointEntity
 import com.dot.trace.data.Settings
+import com.dot.trace.export.GoogleTimelineImporter
 import com.dot.trace.export.GpxExporter
 import com.dot.trace.tracking.Tracker
 import com.dot.trace.tracking.TrackerStatus
@@ -34,6 +35,18 @@ import java.time.ZoneId
 data class DayPoints(val date: LocalDate?, val points: List<PointEntity>)
 
 data class DayTrips(val date: LocalDate?, val segments: List<Segment>)
+
+/** 구글 타임라인 가져오기 진행 상황 */
+data class ImportUi(
+    val running: Boolean,
+    val phase: String = "",
+    val read: Int = 0,
+    val added: Int = 0,
+    val skipped: Int = 0,
+    val error: String? = null,
+    val from: Long? = null,
+    val to: Long? = null,
+)
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -86,6 +99,40 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _pendingReport.value?.let { markReportSeen(it.key) }
         _pendingReport.value = null
     }
+
+    // ── 구글 타임라인 가져오기 ──
+
+    private val _import = MutableStateFlow<ImportUi?>(null)
+    val import: StateFlow<ImportUi?> = _import
+
+    val googleCount: StateFlow<Int> = dao.observeCountBySource(PointEntity.SOURCE_GOOGLE)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
+
+    private var importJob: kotlinx.coroutines.Job? = null
+
+    fun importGoogle(uri: Uri) {
+        if (importJob?.isActive == true) return
+        _import.value = ImportUi(running = true, phase = "시작하는 중")
+        importJob = viewModelScope.launch {
+            try {
+                val res = GoogleTimelineImporter(app, dao) { p ->
+                    _import.value = ImportUi(true, p.phase, p.read, p.added, p.skipped)
+                }.run(uri)
+                _import.value = ImportUi(false, "완료", 0, res.added, res.skipped, null, res.from, res.to)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                _import.value = _import.value?.copy(running = false, phase = "멈춤")
+                throw e
+            } catch (e: Throwable) {
+                _import.value = (_import.value ?: ImportUi(false)).copy(running = false, error = e.message ?: "파일을 읽지 못했어요")
+            }
+        }
+    }
+
+    fun cancelImport() { importJob?.cancel() }
+
+    fun dismissImport() { if (_import.value?.running != true) _import.value = null }
+
+    suspend fun deleteGoogle(): Int = dao.deleteBySource(PointEntity.SOURCE_GOOGLE)
 
     suspend fun place(id: Long): PlaceEntity? = app.db.places().get(id)
 

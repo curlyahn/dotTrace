@@ -393,6 +393,8 @@ private fun DatePill(
     modifier: Modifier = Modifier,
 ) {
     val fmt = remember { DateTimeFormatter.ofPattern("M월 d일 (E)", Locale.KOREAN) }
+    // 오늘이면 요일 대신 '오늘' 표시 → 버튼이 셋이라 좁아진 막대에서도 한 줄에 들어가게
+    val todayFmt = remember { DateTimeFormatter.ofPattern("M월 d일", Locale.KOREAN) }
     Surface(
         modifier = modifier.height(48.dp),
         shape = RoundedCornerShape(50),
@@ -401,7 +403,7 @@ private fun DatePill(
         shadowElevation = 6.dp,
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onPrev) {
+            IconButton(onClick = onPrev, modifier = Modifier.width(40.dp)) {
                 Icon(Icons.AutoMirrored.Rounded.KeyboardArrowLeft, contentDescription = "전날", tint = Dot.Text)
             }
             Row(
@@ -409,18 +411,26 @@ private fun DatePill(
                 horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(date.format(fmt), style = MaterialTheme.typography.labelLarge, color = Dot.Text)
+                Text(
+                    date.format(if (isToday) todayFmt else fmt),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = Dot.Text,
+                    maxLines = 1,
+                    softWrap = false,
+                )
                 if (isToday) {
-                    Spacer(Modifier.width(8.dp))
+                    Spacer(Modifier.width(6.dp))
                     Text(
                         "오늘",
                         style = MaterialTheme.typography.labelSmall,
                         color = Dot.OnLime,
-                        modifier = Modifier.clip(RoundedCornerShape(50)).background(Dot.Lime).padding(horizontal = 8.dp, vertical = 2.dp),
+                        maxLines = 1,
+                        softWrap = false,
+                        modifier = Modifier.clip(RoundedCornerShape(50)).background(Dot.Lime).padding(horizontal = 7.dp, vertical = 2.dp),
                     )
                 }
             }
-            IconButton(onClick = onNext, enabled = !isToday) {
+            IconButton(onClick = onNext, enabled = !isToday, modifier = Modifier.width(40.dp)) {
                 Icon(
                     Icons.AutoMirrored.Rounded.KeyboardArrowRight,
                     contentDescription = "다음날",

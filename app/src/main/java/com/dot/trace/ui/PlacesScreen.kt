@@ -21,6 +21,15 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.rounded.Search
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.text.input.ImeAction
+import kotlinx.coroutines.launch
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
@@ -155,6 +164,30 @@ fun PlaceEditScreen(vm: MainViewModel, kind: String, id: Long?, onBack: () -> Un
     var center by remember { mutableStateOf<LatLng?>(null) }
     var mapReady by remember { mutableStateOf(false) }
     var locating by remember { mutableStateOf(false) }
+    var query by remember { mutableStateOf("") }
+    var searching by remember { mutableStateOf(false) }
+    var results by remember { mutableStateOf<List<android.location.Address>>(emptyList()) }
+    val scope = rememberCoroutineScope()
+    val focus = LocalFocusManager.current
+
+    fun search() {
+        val q = query.trim()
+        if (q.isEmpty() || searching) return
+        focus.clearFocus()
+        searching = true
+        scope.launch {
+            val found = com.dot.trace.data.Geo.search(context, q)
+            searching = false
+            when {
+                found.isEmpty() -> Toast.makeText(context, "'$q'을(를) 찾지 못했어요. 시·구·도로명까지 넣어 보세요", Toast.LENGTH_LONG).show()
+                found.size == 1 -> {
+                    controller.moveTo(found[0].latitude, found[0].longitude, 17.0)
+                    results = emptyList()
+                }
+                else -> results = found
+            }
+        }
+    }
 
     LaunchedEffect(kind, id) {
         existing = id?.let { vm.place(it) } ?: if (kind != PlaceEntity.FAV) vm.placeByKind(kind) else null
@@ -218,13 +251,64 @@ fun PlaceEditScreen(vm: MainViewModel, kind: String, id: Long?, onBack: () -> Un
                 Box(contentAlignment = Alignment.Center) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "뒤로", tint = Dot.Text) }
             }
             Spacer(Modifier.width(10.dp))
-            Surface(shape = RoundedCornerShape(50), color = Dot.Surface.copy(alpha = 0.94f)) {
-                Text(
-                    "지도를 움직여 핀을 ${defaultName(kind).let { if (kind == PlaceEntity.FAV) "장소" else it }}에 맞추세요",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = Dot.Text,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
-                )
+            // 주소로 찾기: 정확한 주소나 건물 이름을 입력하면 그 위치로 이동
+            Surface(shape = RoundedCornerShape(50), color = Dot.Surface.copy(alpha = 0.97f), modifier = Modifier.weight(1f).height(48.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 16.dp, end = 4.dp)) {
+                    Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+                        if (query.isEmpty()) {
+                            Text("주소·건물 이름으로 찾기", style = MaterialTheme.typography.bodyMedium, color = Dot.Faint)
+                        }
+                        BasicTextField(
+                            value = query,
+                            onValueChange = { query = it },
+                            singleLine = true,
+                            textStyle = MaterialTheme.typography.bodyMedium.copy(color = Dot.Text),
+                            cursorBrush = SolidColor(Dot.Lime),
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                            keyboardActions = KeyboardActions(onSearch = { search() }),
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                    IconButton(onClick = ::search) {
+                        if (searching) CircularProgressIndicator(Modifier.size(20.dp), color = Dot.Lime, strokeWidth = 2.dp)
+                        else Icon(Icons.Rounded.Search, "찾기", tint = Dot.Text)
+                    }
+                }
+            }
+        }
+
+        // 주소 찾기 결과
+        if (results.isNotEmpty()) {
+            Surface(
+                shape = RoundedCornerShape(20.dp),
+                color = Dot.Surface.copy(alpha = 0.98f),
+                shadowElevation = 8.dp,
+                modifier = Modifier.fillMaxWidth().statusBarsPadding().padding(start = 12.dp, end = 12.dp, top = 72.dp),
+            ) {
+                Column {
+                    results.forEachIndexed { i, a ->
+                        if (i > 0) Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp).height(1.dp).background(Dot.Line))
+                        Row(
+                            Modifier.fillMaxWidth().clickable {
+                                controller.moveTo(a.latitude, a.longitude, 17.0)
+                                if (kind == PlaceEntity.FAV && name.isBlank()) name = a.featureName?.takeIf { f -> !f.all { it.isDigit() || it == '-' } } ?: ""
+                                results = emptyList()
+                                focus.clearFocus()
+                            }.padding(horizontal = 16.dp, vertical = 14.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(Icons.Rounded.Place, null, tint = Dot.Muted, modifier = Modifier.size(20.dp))
+                            Spacer(Modifier.width(10.dp))
+                            Text(
+                                com.dot.trace.data.Geo.line(a) ?: query,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = Dot.Text,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                }
             }
         }
 
@@ -241,6 +325,11 @@ fun PlaceEditScreen(vm: MainViewModel, kind: String, id: Long?, onBack: () -> Un
             Spacer(Modifier.height(12.dp))
             Surface(shape = RoundedCornerShape(24.dp), color = Dot.Surface.copy(alpha = 0.97f), modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(
+                        "지도를 움직여 빨간 핀을 맞추거나, 위에서 주소·건물 이름으로 찾으세요",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Dot.Muted,
+                    )
                     OutlinedTextField(
                         value = name,
                         onValueChange = { name = it.take(20) },

@@ -46,6 +46,25 @@ object Geo {
         }
     }
 
+    /** 주소·건물 이름으로 찾기 (휴대폰의 주소 변환 기능 사용). 최대 5개 */
+    suspend fun search(context: Context, query: String): List<Address> = withContext(Dispatchers.IO) {
+        if (!Geocoder.isPresent() || query.isBlank()) return@withContext emptyList()
+        val geocoder = Geocoder(context, Locale.KOREA)
+        runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                suspendCancellableCoroutine<List<Address>> { cont ->
+                    geocoder.getFromLocationName(query, 5, object : Geocoder.GeocodeListener {
+                        override fun onGeocode(addresses: MutableList<Address>) { cont.resume(addresses.toList()) }
+                        override fun onError(errorMessage: String?) { cont.resume(emptyList()) }
+                    })
+                }
+            } else {
+                @Suppress("DEPRECATION")
+                geocoder.getFromLocationName(query, 5) ?: emptyList()
+            }
+        }.getOrDefault(emptyList())
+    }
+
     /** 한 줄 주소 ('대한민국' 빼고) */
     fun line(a: Address): String? = a.getAddressLine(0)?.removePrefix("대한민국")?.trim()?.takeIf { it.isNotBlank() }
 

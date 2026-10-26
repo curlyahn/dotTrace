@@ -79,6 +79,12 @@ fun SettingsScreen(
 
     var exportAll by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
+    var confirmDeleteGoogle by remember { mutableStateOf(false) }
+    val importState by vm.import.collectAsStateWithLifecycle()
+    val googleCount by vm.googleCount.collectAsStateWithLifecycle()
+    val importer = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) vm.importGoogle(uri)
+    }
 
     val exporter = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/gpx+xml")) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
@@ -195,10 +201,80 @@ fun SettingsScreen(
         }
         ActionRow("$dayLabel 기록 삭제", color = Dot.Coral) { confirmDelete = true }
 
+        Section("구글 타임라인")
+        Text(
+            "휴대폰 설정 → 위치 → 위치 서비스 → 타임라인 → '타임라인 데이터 내보내기'로 만든 Timeline.json을 고르세요. " +
+                "예전 구글 테이크아웃의 Records.json도 돼요. 이동 경로·머문 곳·이동 수단을 가져오고, 이미 있는 기록과 겹치는 부분은 건너뛰어요.",
+            style = MaterialTheme.typography.bodySmall,
+            color = Dot.Muted,
+            modifier = Modifier.padding(horizontal = 20.dp),
+        )
+        ActionRow("구글 타임라인 가져오기") { importer.launch(arrayOf("application/json", "text/plain", "application/octet-stream", "*/*")) }
+        if (googleCount > 0) {
+            ActionRow("가져온 구글 기록 지우기 (${googleCount}개)", color = Dot.Coral) { confirmDeleteGoogle = true }
+        }
+
         Section("정보")
         NavRow("정보 · 도움말", "사용법, 만든 이, 앱 버전", onOpenAbout)
 
         Spacer(Modifier.height(32.dp))
+    }
+
+    importState?.let { st ->
+        val fmt = remember { java.text.SimpleDateFormat("yyyy.M.d", java.util.Locale.KOREA) }
+        AlertDialog(
+            onDismissRequest = { if (!st.running) vm.dismissImport() },
+            title = { Text(if (st.running) "구글 타임라인 가져오는 중" else if (st.error != null) "가져오지 못했어요" else "가져오기 완료") },
+            text = {
+                Column {
+                    if (st.running) {
+                        androidx.compose.material3.LinearProgressIndicator(
+                            color = Dot.Lime,
+                            trackColor = Dot.Surface2,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Spacer(Modifier.height(12.dp))
+                        Text("${st.phase} · 읽은 위치 ${"%,d".format(st.read)}개 · 저장 ${"%,d".format(st.added)}개")
+                        Spacer(Modifier.height(4.dp))
+                        Text("파일이 크면 몇 분 걸릴 수 있어요.", color = Dot.Muted, style = MaterialTheme.typography.bodySmall)
+                    } else if (st.error != null) {
+                        Text(st.error)
+                        if (st.added > 0) Text("그 전까지 ${"%,d".format(st.added)}개는 저장됐어요.", color = Dot.Muted)
+                    } else {
+                        Text("${"%,d".format(st.added)}개 지점을 가져왔어요.")
+                        if (st.from != null && st.to != null) {
+                            Text("${fmt.format(java.util.Date(st.from))} ~ ${fmt.format(java.util.Date(st.to))}", color = Dot.Muted)
+                        }
+                        if (st.skipped > 0) Text("이미 있는 기록과 겹친 ${"%,d".format(st.skipped)}개는 건너뛰었어요.", color = Dot.Muted)
+                        if (st.added == 0 && st.skipped == 0) Text("파일에서 위치 기록을 찾지 못했어요. Timeline.json이 맞는지 확인해 주세요.", color = Dot.Muted)
+                    }
+                }
+            },
+            confirmButton = {
+                if (st.running) TextButton(onClick = { vm.cancelImport() }) { Text("멈추기", color = Dot.Coral) }
+                else TextButton(onClick = { vm.dismissImport() }) { Text("확인") }
+            },
+            containerColor = Dot.Surface,
+        )
+    }
+
+    if (confirmDeleteGoogle) {
+        AlertDialog(
+            onDismissRequest = { confirmDeleteGoogle = false },
+            title = { Text("가져온 구글 기록을 지울까요?") },
+            text = { Text("DotTrace가 직접 기록한 위치는 그대로 남아요.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmDeleteGoogle = false
+                    scope.launch {
+                        val n = vm.deleteGoogle()
+                        Toast.makeText(context, "${"%,d".format(n)}개를 지웠어요", Toast.LENGTH_SHORT).show()
+                    }
+                }) { Text("지우기", color = Dot.Coral) }
+            },
+            dismissButton = { TextButton(onClick = { confirmDeleteGoogle = false }) { Text("취소") } },
+            containerColor = Dot.Surface,
+        )
     }
 
     if (confirmDelete) {
