@@ -87,5 +87,6 @@ Dot 앱과 같은 서명 키(`dot-debug.keystore.base64.txt`)의 내용 전체�
 | `tracking/TrackerStatus.kt` | 서비스와 화면이 함께 보는 현재 상태 |
 | `tracking/BootReceiver.kt` | 재부팅·업데이트 후 기록 재시작 |
 | `data/AppDatabase.kt` | Room DB (`points` 테이블: 시각, 위도, 경도, 정확도, 고도, 속도) |
-| `ui/MapScreen.kt` | 구글 지도 + 날짜 선택 + 상태 카드 |
+| `ui/MapScreen.kt` | 날짜 선택 + 상태 카드 + 이동 목록 |
+| `ui/TraceMap.kt` | MapLibre 지도와 경로·지점 레이어 |
 | `ui/SettingsScreen.kt` | 주기, 권한, GPX 내보내기, 삭제 |
