@@ -71,7 +71,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     /** 선택한 날짜의 기록 (자정~자정, 휴대폰 시간대 기준). 어느 날짜의 목록인지 함께 담는다. */
     val day: StateFlow<DayPoints> = _date
-        .flatMapLatest { d -> dao.observeBetween(startOf(d), startOf(d.plusDays(1))).map { DayPoints(d, it) } }
+        .flatMapLatest { d -> dao.observeBetween(startOf(d), startOf(d.plusDays(1))).map { DayPoints(d, com.dot.trace.trips.PathCleaner.clean(it)) } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), DayPoints(null, emptyList()))
 
     private val analysis = app.db.analysis()

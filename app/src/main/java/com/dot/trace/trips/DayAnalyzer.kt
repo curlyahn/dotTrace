@@ -121,7 +121,7 @@ class DayStore(private val db: AppDatabase) {
         db.analysis().cached(key)?.takeIf { it.pointCount == count && it.lastTime == last }?.let { c ->
             decode(c.data)?.let { return it }
         }
-        val segs = TripClassifier.classify(pd.between(from, to))
+        val segs = TripClassifier.classify(PathCleaner.clean(pd.between(from, to)))
         db.analysis().putCache(DayCacheEntity(key, count, last, encode(segs)))
         return segs
     }
@@ -133,7 +133,7 @@ class DayStore(private val db: AppDatabase) {
 
     // v2: 이동 구간에는 줄인 경로도 저장 (경로 학습을 리포트에도 적용하려고)
     private fun encode(segs: List<Segment>): String = buildString {
-        append("v2\n")
+        append("v3\n")
         for (s in segs) {
             append(if (s.stay) 's' else 'm').append('|')
             append(s.start).append('|').append(s.end).append('|').append(s.mode.name).append('|')
@@ -146,7 +146,7 @@ class DayStore(private val db: AppDatabase) {
 
     private fun decode(data: String): List<Segment>? = runCatching {
         val lines = data.lines()
-        if (lines.firstOrNull() != "v2") return null
+        if (lines.firstOrNull() != "v3") return null
         lines.drop(1).filter { it.isNotBlank() }.map { l ->
             val f = l.split('|')
             val path = RouteMatcher.decode(f.getOrNull(9)?.takeIf { it.isNotEmpty() })
