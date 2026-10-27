@@ -86,6 +86,12 @@ class MapController {
         go(CameraUpdateFactory.newLatLngZoom(LatLng(lat, lng), zoom.toFloat()), animate, 500)
     }
 
+    /** 확대(+1)·축소(-1) */
+    fun zoomBy(delta: Float) {
+        if (state == null) return
+        go(if (delta > 0) CameraUpdateFactory.zoomIn() else CameraUpdateFactory.zoomOut(), animate = true, ms = 250)
+    }
+
     fun focusAt(lat: Double, lng: Double) =
         fit(listOf(PointEntity(time = 0, lat = lat, lng = lng, accuracy = null, altitude = null, speed = null)))
 

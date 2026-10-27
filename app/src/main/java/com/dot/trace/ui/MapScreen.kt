@@ -35,6 +35,8 @@ import androidx.compose.material.icons.rounded.BarChart
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Timeline
+import androidx.compose.material.icons.rounded.Remove
+import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.MyLocation
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material3.Button
@@ -336,6 +338,21 @@ fun MapScreen(
             Modifier.align(Alignment.BottomCenter).fillMaxWidth().navigationBarsPadding().padding(16.dp),
             horizontalAlignment = Alignment.End,
         ) {
+            // 확대·축소
+            Surface(shape = RoundedCornerShape(24.dp), color = Dot.Surface.copy(alpha = 0.94f), shadowElevation = 6.dp) {
+                Column(Modifier.width(48.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Box(
+                        Modifier.size(48.dp).clickable { controller.zoomBy(1f) },
+                        contentAlignment = Alignment.Center,
+                    ) { Icon(Icons.Rounded.Add, contentDescription = "확대", tint = Dot.Text) }
+                    Box(Modifier.width(24.dp).height(1.dp).background(Dot.Line))
+                    Box(
+                        Modifier.size(48.dp).clickable { controller.zoomBy(-1f) },
+                        contentAlignment = Alignment.Center,
+                    ) { Icon(Icons.Rounded.Remove, contentDescription = "축소", tint = Dot.Text) }
+                }
+            }
+            Spacer(Modifier.height(10.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 // 위치를 잡으면 버튼 옆에 정확도를 잠깐 보여 준다
                 meNote?.let { note ->
