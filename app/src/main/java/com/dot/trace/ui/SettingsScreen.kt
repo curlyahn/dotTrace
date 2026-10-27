@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -252,6 +253,30 @@ fun SettingsScreen(
             Icon(Icons.AutoMirrored.Rounded.KeyboardArrowRight, contentDescription = null, tint = Dot.Faint)
         }
 
+        Section("내 차")
+        var showCarPicker by remember { mutableStateOf(false) }
+        val btLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
+            if (ok) showCarPicker = true
+            else Toast.makeText(context, "'근처 기기' 권한이 있어야 차 블루투스를 고를 수 있어요", Toast.LENGTH_LONG).show()
+        }
+        NavRow(
+            title = "내 차 블루투스",
+            body = if (settings.carDevices.isEmpty())
+                "차와 블루투스로 연결되면 자동차 이동으로 기록해요. 눌러서 내 차를 골라 주세요."
+            else settings.carDevices.joinToString(", ") { it.name } + " · 연결되어 있는 동안 자동차로 기록하고, 연결이 끊기면 주차한 곳을 남겨요.",
+        ) {
+            val perm = com.dot.trace.tracking.CarBluetooth.permission
+            if (perm == null || com.dot.trace.tracking.CarBluetooth.hasPermission(context)) showCarPicker = true
+            else btLauncher.launch(perm)
+        }
+        if (showCarPicker) {
+            CarPickerDialog(
+                current = settings.carDevices,
+                onDismiss = { showCarPicker = false },
+                onSave = { vm.setCarDevices(it); showCarPicker = false },
+            )
+        }
+
         Section("안정적으로 기록하기")
         StatusRow(
             title = "신체 활동 감지",
@@ -458,4 +483,77 @@ private fun ActionRow(title: String, color: Color = Dot.Text, onClick: () -> Uni
         Text(title, style = MaterialTheme.typography.titleMedium, color = color, modifier = Modifier.weight(1f))
         Icon(Icons.AutoMirrored.Rounded.KeyboardArrowRight, contentDescription = null, tint = Dot.Faint)
     }
+}
+
+/** 차 이름에 흔한 말 (목록 위로 올리고 '차' 표시) */
+private val CAR_HINTS = listOf(
+    "car", "kia", "hyundai", "genesis", "bmw", "benz", "mercedes", "audi", "volvo", "toyota", "lexus", "honda",
+    "tesla", "ford", "sync", "uvo", "bluelink", "renault", "chevrolet", "ssangyong", "kgm", "volkswagen", "vw", "porsche",
+    "차", "기아", "현대", "제네시스",
+)
+
+private fun looksLikeCar(name: String): Boolean {
+    val n = name.lowercase()
+    return CAR_HINTS.any { it in n }
+}
+
+/** 짝지은 블루투스 기기 중 내 차 고르기 (최대 3대) */
+@Composable
+private fun CarPickerDialog(
+    current: List<com.dot.trace.tracking.BtDevice>,
+    onDismiss: () -> Unit,
+    onSave: (List<com.dot.trace.tracking.BtDevice>) -> Unit,
+) {
+    val context = LocalContext.current
+    val devices = remember {
+        com.dot.trace.tracking.CarBluetooth.bonded(context).sortedByDescending { looksLikeCar(it.name) }
+    }
+    var picked by remember { mutableStateOf(current.map { it.address }.toSet()) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("내 차 블루투스") },
+        text = {
+            Column {
+                Text(
+                    "이 휴대폰과 짝지은 기기예요. 차를 골라 주세요 (최대 3대). 목록에 없으면 먼저 휴대폰 설정에서 차와 블루투스를 연결해 주세요.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Dot.Muted,
+                )
+                Spacer(Modifier.height(8.dp))
+                if (devices.isEmpty()) {
+                    Text("짝지은 블루투스 기기가 없어요.", style = MaterialTheme.typography.bodyMedium, color = Dot.Text)
+                }
+                Column(Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState())) {
+                    devices.forEach { d ->
+                        val on = d.address in picked
+                        Row(
+                            Modifier.fillMaxWidth().clickable {
+                                picked = if (on) picked - d.address else if (picked.size < 3) picked + d.address else picked
+                            }.padding(vertical = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            androidx.compose.material3.Checkbox(
+                                checked = on,
+                                onCheckedChange = {
+                                    picked = if (on) picked - d.address else if (picked.size < 3) picked + d.address else picked
+                                },
+                                colors = androidx.compose.material3.CheckboxDefaults.colors(checkedColor = Dot.Lime, checkmarkColor = Dot.OnLime),
+                            )
+                            Column(Modifier.weight(1f)) {
+                                Text(d.name, style = MaterialTheme.typography.bodyLarge, color = Dot.Text)
+                                if (looksLikeCar(d.name)) Text("차일 수 있어요", style = MaterialTheme.typography.labelSmall, color = Dot.Lime)
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                onSave(devices.filter { it.address in picked } + current.filter { it.address in picked && devices.none { d -> d.address == it.address } })
+            }) { Text("저장") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("취소") } },
+        containerColor = Dot.Surface,
+    )
 }

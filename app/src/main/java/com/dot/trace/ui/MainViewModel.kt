@@ -271,6 +271,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setMapStyle(style: String) = viewModelScope.launch { app.prefs.setMapStyle(style) }
 
+    fun setCarDevices(list: List<com.dot.trace.tracking.BtDevice>) = viewModelScope.launch { app.prefs.setCarDevices(list) }
+
     fun setPanelAlpha(a: Float) = viewModelScope.launch { app.prefs.setPanelAlpha(a) }
 
     // ── Google 장소 이름 ──

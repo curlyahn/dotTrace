@@ -27,6 +27,8 @@ data class TrackerStatus(
     val lastAccuracy: Float? = null,
     /** 재시도 중일 때 지금의 재시도 간격 (ms) */
     val retryIntervalMs: Long? = null,
+    /** 등록한 내 차와 블루투스로 연결되어 있음 */
+    val inCar: Boolean = false,
 ) {
     val running: Boolean get() = phase != Phase.Idle
 }

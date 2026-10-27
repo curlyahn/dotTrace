@@ -1,5 +1,7 @@
 package com.dot.trace.tracking
 
+import com.dot.trace.trips.ActivityCode
+
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Notification
@@ -92,6 +94,62 @@ class TrackingService : LifecycleService() {
     private var slowSince = 0L
     /** OS 활동 인식이 마지막으로 알려 준 활동 (DetectedActivity 상수) */
     private var currentActivity: Int? = null
+    /** 등록한 내 차 블루투스 주소들과, 지금 연결되어 있는지 */
+    private var carAddresses: Set<String> = emptySet()
+    private var carConnected = false
+    private var carReceiverOn = false
+
+    /** 내 차와 블루투스가 연결·해제될 때 */
+    private val carReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            @Suppress("DEPRECATION")
+            val device: android.bluetooth.BluetoothDevice? =
+                if (Build.VERSION.SDK_INT >= 33) intent.getParcelableExtra(android.bluetooth.BluetoothDevice.EXTRA_DEVICE, android.bluetooth.BluetoothDevice::class.java)
+                else intent.getParcelableExtra(android.bluetooth.BluetoothDevice.EXTRA_DEVICE)
+            val addr = device?.address ?: return
+            if (addr !in carAddresses) return
+            when (intent.action) {
+                android.bluetooth.BluetoothDevice.ACTION_ACL_CONNECTED -> onCarConnected()
+                android.bluetooth.BluetoothDevice.ACTION_ACL_DISCONNECTED -> onCarDisconnected()
+            }
+        }
+    }
+
+    /** 차에 탔다: 자동차로 기록하고 15초 주기로 */
+    private fun onCarConnected() {
+        if (carConnected) return
+        carConnected = true
+        updateStatus { it.copy(inCar = true) }
+        if (mode == Mode.Still) resumeMoving()
+        if ((mode == Mode.Normal || mode == Mode.Still) && intervalMs > FAST_INTERVAL_MS) applyMode(Mode.Fast)
+    }
+
+    /** 차에서 내렸다(시동 끔): 주차한 곳을 바로 한 번 남기고 원래 판단으로 */
+    private fun onCarDisconnected() {
+        if (!carConnected) return
+        carConnected = false
+        updateStatus { it.copy(inCar = false) }
+        captureNow()
+    }
+
+    private fun startCarWatch() {
+        if (carReceiverOn || !CarBluetooth.hasPermission(this)) return
+        val filter = IntentFilter().apply {
+            addAction(android.bluetooth.BluetoothDevice.ACTION_ACL_CONNECTED)
+            addAction(android.bluetooth.BluetoothDevice.ACTION_ACL_DISCONNECTED)
+        }
+        ContextCompat.registerReceiver(this, carReceiver, filter, ContextCompat.RECEIVER_EXPORTED)
+        carReceiverOn = true
+        // 기록을 시작할 때 이미 차에 연결되어 있을 수 있다
+        CarBluetooth.checkConnected(this, carAddresses) { on -> if (on) lifecycleScope.launch { onCarConnected() } }
+    }
+
+    private fun stopCarWatch() {
+        if (!carReceiverOn) return
+        carReceiverOn = false
+        runCatching { unregisterReceiver(carReceiver) }
+        carConnected = false
+    }
     /** 신호를 잃기 직전 마지막으로 저장한 시각. 다시 잡힌 첫 위치에 '끊겨 있던 시간'을 남긴다 */
     private var lostSince = 0L
     private var watchdog: Job? = null
@@ -128,7 +186,7 @@ class TrackingService : LifecycleService() {
             when (last.activityType) {
                 DetectedActivity.STILL -> if (enter) {
                     currentActivity = DetectedActivity.STILL
-                    if (mode != Mode.Still) settleThenStill()
+                    if (mode != Mode.Still && !carConnected) settleThenStill()
                 } else {
                     currentActivity = null
                     if (mode == Mode.Still) resumeMoving()
@@ -194,6 +252,19 @@ class TrackingService : LifecycleService() {
                 captureNow()
                 startTransitions()
                 startWatchdog()
+                // 내 차 블루투스: 설정에서 바꾸면 바로 반영
+                launch {
+                    app.prefs.settings.map { it.carDevices.map { d -> d.address }.toSet() }.distinctUntilChanged().collect { cars ->
+                        carAddresses = cars
+                        if (cars.isEmpty()) {
+                            if (carConnected) onCarDisconnected()
+                            stopCarWatch()
+                        } else {
+                            startCarWatch()
+                            CarBluetooth.checkConnected(this@TrackingService, cars) { on -> if (on) lifecycleScope.launch { onCarConnected() } }
+                        }
+                    }
+                }
                 // 기록 중에 주기 설정을 바꾸면 바로 반영
                 app.prefs.settings.map { it.intervalMinutes }.distinctUntilChanged().drop(1).collect { m ->
                     intervalMs = m * 60_000L
@@ -294,7 +365,8 @@ class TrackingService : LifecycleService() {
         if (toSave.isEmpty()) return
         val lost = if (mode == Mode.Retry && lostSince > 0) (toSave.first().time - lostSince).coerceAtLeast(0) else null
         val wifiSnap = wifiSnapshot()
-        val activity = currentActivity
+        // 내 차와 연결되어 있으면 자동차로 이동 중
+        val activity = if (carConnected) ActivityCode.CAR else currentActivity
         lastSavedTime = last
         lastAcceptedAt = System.currentTimeMillis()
 
@@ -333,7 +405,7 @@ class TrackingService : LifecycleService() {
             Mode.Fast -> {
                 // 느려진 상태가 2분 넘게 이어지면 원래 주기로 (신호 대기 등으로 잠깐 멈춘 건 무시).
                 // 활동 인식이 아직 차량·자전거라고 하면(버스 정류장, 정체) 15초 주기를 유지한다.
-                val riding = currentActivity == DetectedActivity.IN_VEHICLE || currentActivity == DetectedActivity.ON_BICYCLE
+                val riding = carConnected || currentActivity == DetectedActivity.IN_VEHICLE || currentActivity == DetectedActivity.ON_BICYCLE
                 if (speed < FAST_EXIT_MPS && !riding) {
                     if (slowSince == 0L) slowSince = newest.time
                     if (newest.time - slowSince >= FAST_EXIT_AFTER_MS) applyMode(Mode.Normal)
@@ -554,6 +626,7 @@ class TrackingService : LifecycleService() {
         fused.removeLocationUpdates(callback)
         disarmMotionSensor()
         stopTransitions()
+        stopCarWatch()
         started = false
         Tracker.reset()
     }

@@ -22,6 +22,8 @@ data class Settings(
     val googlePlaces: Boolean = true,
     /** 지도 위 카드·버튼의 불투명도 (0.3~1, 낮을수록 투명) */
     val panelAlpha: Float = DEFAULT_PANEL_ALPHA,
+    /** 내 차 블루투스 (연결되어 있는 동안은 자동차로 기록) */
+    val carDevices: List<com.dot.trace.tracking.BtDevice> = emptyList(),
 ) {
     companion object {
         const val DEFAULT_INTERVAL_MINUTES = 1
@@ -59,6 +61,7 @@ class Prefs(context: Context) {
         val suggestDismissed = androidx.datastore.preferences.core.stringPreferencesKey("suggest_dismissed")
         val googlePlaces = booleanPreferencesKey("google_places")
         val panelAlpha = androidx.datastore.preferences.core.floatPreferencesKey("panel_alpha")
+        val carDevices = androidx.datastore.preferences.core.stringSetPreferencesKey("car_devices")
         val placesQuota = androidx.datastore.preferences.core.stringPreferencesKey("places_quota")
     }
 
@@ -67,6 +70,10 @@ class Prefs(context: Context) {
             intervalMinutes = (p[K.interval] ?: Settings.DEFAULT_INTERVAL_MINUTES).coerceIn(1, 120),
             trackingEnabled = p[K.tracking] ?: false,
             googlePlaces = p[K.googlePlaces] ?: true,
+            carDevices = p[K.carDevices].orEmpty().mapNotNull { e ->
+                val i = e.indexOf('|')
+                if (i <= 0) null else com.dot.trace.tracking.BtDevice(e.substring(0, i), e.substring(i + 1))
+            }.sortedBy { it.name },
             panelAlpha = (p[K.panelAlpha] ?: Settings.DEFAULT_PANEL_ALPHA).coerceIn(Settings.MIN_PANEL_ALPHA, 1f),
             mapStyle = Settings.migrateStyle(p[K.mapStyle])?.takeIf { s -> Settings.MAP_STYLES.any { it.first == s } } ?: Settings.DEFAULT_MAP_STYLE,
         )
@@ -79,6 +86,9 @@ class Prefs(context: Context) {
     suspend fun setTrackingEnabled(enabled: Boolean) = ds.edit { it[K.tracking] = enabled }
 
     suspend fun setMapStyle(style: String) = ds.edit { it[K.mapStyle] = style }
+
+    suspend fun setCarDevices(list: List<com.dot.trace.tracking.BtDevice>) =
+        ds.edit { it[K.carDevices] = list.map { d -> "${d.address}|${d.name}" }.toSet() }
 
     suspend fun setPanelAlpha(a: Float) = ds.edit { it[K.panelAlpha] = a.coerceIn(Settings.MIN_PANEL_ALPHA, 1f) }
 

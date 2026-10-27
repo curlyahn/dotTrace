@@ -3,6 +3,9 @@
 
     <!-- 지도 타일·위치 계산에 사용. 위치 기록은 기기 밖으로 나가지 않는다. -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- 내 차 블루투스 연결 감지 (짝지은 기기 목록과 연결 알림만, 새로 검색하지 않음) -->
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- OS가 이미 해 둔 와이파이 검색 결과만 읽는다 (새로 검색하지 않음): 함께 이동하는 와이파이로 대중교통 판별 -->
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
