@@ -110,7 +110,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         analysis.deleteOverridesBetween(seg.start + 1, seg.end - 1)
         analysis.insertOverride(OverrideEntity(start = seg.start, end = seg.end, mode = mode.name))
         if (learn) {
-            analysis.insertRule(ModeRuleEntity(startLat = seg.lat, startLng = seg.lng, endLat = seg.endLat, endLng = seg.endLng, mode = mode.name))
+            // 경로 모양도 함께 기억 → 같은 길(버스·셔틀 노선 등)이면 타고 내린 곳이 달라도 알아본다
+            val rm = com.dot.trace.trips.RouteMatcher
+            val simple = rm.simplify(seg.points).takeIf { it.size >= 2 }
+            val path = simple?.let { rm.encode(it) }
+            // 같은 경로(또는 같은 출발·도착)를 예전에 다른 수단으로 기억했으면 새로 고친 것으로 바꾼다
+            for (old in analysis.rules()) {
+                val oldPath = rm.decode(old.path)
+                val samePath = simple != null && oldPath.size >= 2 &&
+                    rm.overlap(simple, oldPath) >= rm.MIN_OVERLAP && rm.overlap(oldPath, simple) >= rm.MIN_OVERLAP
+                val sameEnds = com.dot.trace.data.Geo.distance(seg.lat, seg.lng, old.startLat, old.startLng) <= DayAnalyzer.RULE_RADIUS_M &&
+                    com.dot.trace.data.Geo.distance(seg.endLat, seg.endLng, old.endLat, old.endLng) <= DayAnalyzer.RULE_RADIUS_M
+                if (samePath || sameEnds) analysis.deleteRule(old.id)
+            }
+            analysis.insertRule(
+                ModeRuleEntity(
+                    startLat = seg.lat, startLng = seg.lng, endLat = seg.endLat, endLng = seg.endLng,
+                    mode = mode.name, path = path,
+                )
+            )
         }
     }
 

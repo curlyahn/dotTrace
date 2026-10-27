@@ -7,6 +7,7 @@ import com.dot.trace.data.ModeRuleEntity
 import com.dot.trace.data.OverrideEntity
 import com.dot.trace.data.PlaceEntity
 import com.dot.trace.data.PoiNameEntity
+import com.dot.trace.data.PointEntity
 import com.dot.trace.data.match
 import java.time.LocalDate
 import java.time.ZoneId
@@ -18,7 +19,12 @@ data class Corrections(
     val rules: List<ModeRuleEntity> = emptyList(),
     val places: List<PlaceEntity> = emptyList(),
     val poi: List<PoiNameEntity> = emptyList(),
-)
+) {
+    /** 경로를 학습한 규칙과 그 경로 (한 번만 풀어 둔다) */
+    val routes: List<Pair<ModeRuleEntity, List<RouteMatcher.LL>>> by lazy {
+        rules.mapNotNull { r -> RouteMatcher.decode(r.path).takeIf { it.size >= 2 }?.let { r to it } }
+    }
+}
 
 object DayAnalyzer {
 
@@ -50,13 +56,38 @@ object DayAnalyzer {
                 nameFromGoogle = ov?.name == null && place == null && poi?.source == PoiNameEntity.SOURCE_GOOGLE,
             )
         } else {
-            val overridden = ov?.mode?.let { runCatching { TransportMode.valueOf(it) }.getOrNull() }
-            val ruled = if (overridden == null) c.rules.firstOrNull {
+            val overridden = ov?.mode?.let { modeOf(it) }
+            // 1) 학습한 경로와 대부분 겹치면 그 수단 (가장 많이 겹치는 경로)
+            val routed = if (overridden == null) routeMode(seg, c) else null
+            // 2) 같은 출발지·도착지 규칙
+            val ruled = if (overridden == null && routed == null) c.rules.firstOrNull {
                 Geo.distance(seg.lat, seg.lng, it.startLat, it.startLng) <= RULE_RADIUS_M &&
                     Geo.distance(seg.endLat, seg.endLng, it.endLat, it.endLng) <= RULE_RADIUS_M
-            }?.let { runCatching { TransportMode.valueOf(it.mode) }.getOrNull() } else null
-            seg.copy(mode = overridden ?: ruled ?: seg.mode, edited = overridden != null)
+            }?.let { modeOf(it.mode) } else null
+            seg.copy(
+                mode = overridden ?: routed ?: ruled ?: seg.mode,
+                edited = overridden != null,
+                learned = overridden == null && (routed ?: ruled) != null,
+            )
         }
+    }
+
+    private fun modeOf(name: String): TransportMode? = runCatching { TransportMode.valueOf(name) }.getOrNull()
+
+    private fun routeMode(seg: Segment, c: Corrections): TransportMode? {
+        if (c.routes.isEmpty() || seg.distanceM < RouteMatcher.MIN_LENGTH_M || seg.points.size < 2) return null
+        val hours = seg.durationMs / 3_600_000.0
+        val kmh = if (hours > 0) seg.distanceM / 1000 / hours else 0.0
+        val path = RouteMatcher.simplify(seg.points)
+        return c.routes.asSequence()
+            .mapNotNull { (rule, learned) ->
+                val m = modeOf(rule.mode) ?: return@mapNotNull null
+                if (!RouteMatcher.speedFits(m, kmh)) return@mapNotNull null
+                m to RouteMatcher.overlap(path, learned)
+            }
+            .filter { it.second >= RouteMatcher.MIN_OVERLAP }
+            .maxByOrNull { it.second }
+            ?.first
     }
 
     private fun overlap(s: Segment, o: OverrideEntity): Long =
@@ -100,23 +131,27 @@ class DayStore(private val db: AppDatabase) {
         return Corrections(a.overridesBetween(from, to), a.rules(), db.places().all(), a.poi())
     }
 
+    // v2: 이동 구간에는 줄인 경로도 저장 (경로 학습을 리포트에도 적용하려고)
     private fun encode(segs: List<Segment>): String = buildString {
-        append("v1\n")
+        append("v2\n")
         for (s in segs) {
             append(if (s.stay) 's' else 'm').append('|')
             append(s.start).append('|').append(s.end).append('|').append(s.mode.name).append('|')
             append(s.distanceM).append('|').append(s.lat).append('|').append(s.lng).append('|')
-            append(s.endLat).append('|').append(s.endLng).append('\n')
+            append(s.endLat).append('|').append(s.endLng).append('|')
+            if (!s.stay) append(RouteMatcher.encode(RouteMatcher.simplify(s.points)))
+            append('\n')
         }
     }
 
     private fun decode(data: String): List<Segment>? = runCatching {
         val lines = data.lines()
-        if (lines.firstOrNull() != "v1") return null
+        if (lines.firstOrNull() != "v2") return null
         lines.drop(1).filter { it.isNotBlank() }.map { l ->
             val f = l.split('|')
+            val path = RouteMatcher.decode(f.getOrNull(9)?.takeIf { it.isNotEmpty() })
             Segment(
-                points = emptyList(),
+                points = path.map { PointEntity(time = 0, lat = it.lat, lng = it.lng, accuracy = null, altitude = null, speed = null) },
                 stay = f[0] == "s",
                 mode = TransportMode.valueOf(f[3]),
                 start = f[1].toLong(),

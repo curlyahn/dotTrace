@@ -166,7 +166,7 @@ private fun TimelineRow(s: Segment, first: Boolean, last: Boolean, onClick: () -
                 )
                 Text(
                     "${fmt.format(Date(s.start))}–${fmt.format(Date(s.end))} · ${durationText(s.durationMs)}" +
-                        (if (s.edited) " · 직접 고침" else ""),
+                        (if (s.edited) " · 직접 고침" else if (s.learned) " · 학습한 경로" else ""),
                     style = MaterialTheme.typography.bodySmall,
                     color = Dot.Muted,
                 )
@@ -252,7 +252,7 @@ fun MoveEditDialog(seg: Segment, onDismiss: () -> Unit, onSave: (mode: Transport
                     }
                 }
                 Spacer(Modifier.height(12.dp))
-                CheckRow("같은 출발지·도착지 이동은 다음에도 이 수단으로", learn) { learn = it }
+                CheckRow("이 경로로 다니는 이동은 다음에도 이 수단으로 (일부 구간만 겹쳐도)", learn) { learn = it }
             }
         },
         confirmButton = { TextButton(onClick = { onSave(mode, learn) }) { Text("저장") } },

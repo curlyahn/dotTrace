@@ -144,7 +144,10 @@ data class OverrideEntity(
     val name: String? = null,
 )
 
-/** 학습한 규칙: 이 출발지 → 도착지 이동은 이 수단 */
+/**
+ * 학습한 규칙: 이 출발지 → 도착지 이동, 또는 이 경로(path)를 지나는 이동은 이 수단.
+ * path: 약 100m 간격으로 줄인 경로 "위도,경도;위도,경도;…" (예전 규칙은 null)
+ */
 @Entity(tableName = "mode_rules")
 data class ModeRuleEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
@@ -153,6 +156,7 @@ data class ModeRuleEntity(
     val endLat: Double,
     val endLng: Double,
     val mode: String,
+    val path: String? = null,
 )
 
 /**
@@ -240,7 +244,7 @@ interface AnalysisDao {
 
 @Database(
     entities = [PointEntity::class, PlaceEntity::class, OverrideEntity::class, ModeRuleEntity::class, PoiNameEntity::class, DayCacheEntity::class],
-    version = 6,
+    version = 7,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -253,7 +257,7 @@ abstract class AppDatabase : RoomDatabase() {
 
         fun get(context: Context): AppDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(context.applicationContext, AppDatabase::class.java, "dottrace.db")
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
                 .build()
                 .also { instance = it }
         }
@@ -315,6 +319,15 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE poi_names ADD COLUMN source TEXT NOT NULL DEFAULT 'map'")
                 db.execSQL("ALTER TABLE poi_names ADD COLUMN fetchedAt INTEGER NOT NULL DEFAULT 0")
                 db.execSQL("ALTER TABLE poi_names ADD COLUMN placeId TEXT")
+            }
+        }
+
+        /** 이동 수단 학습에 경로 모양 추가 */
+        private val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE mode_rules ADD COLUMN path TEXT")
+                // 하루 분석 저장 형식이 바뀌었으므로 다시 분석
+                db.execSQL("DELETE FROM day_cache")
             }
         }
     }

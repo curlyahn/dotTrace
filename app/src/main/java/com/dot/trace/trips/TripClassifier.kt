@@ -58,6 +58,8 @@ data class Segment(
     val placeKind: String? = null,
     /** 이름이 Google 장소 정보에서 왔으면 true (출처 표시용) */
     val nameFromGoogle: Boolean = false,
+    /** 학습한 경로·규칙으로 이동 수단을 정했으면 true */
+    val learned: Boolean = false,
 ) {
     val durationMs: Long get() = end - start
 }

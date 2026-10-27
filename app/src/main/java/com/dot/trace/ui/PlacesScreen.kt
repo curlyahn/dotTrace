@@ -123,7 +123,8 @@ fun PlacesScreen(vm: MainViewModel, onBack: () -> Unit, onEdit: (kind: String, i
                 val mode = runCatching { com.dot.trace.trips.TransportMode.valueOf(r.mode) }.getOrNull()
                 val from = rememberAddress(r.startLat, r.startLng) ?: "출발지"
                 val to = rememberAddress(r.endLat, r.endLng) ?: "도착지"
-                RemovableRow(mode?.label ?: r.mode, "$from → $to") { vm.deleteRule(r.id) }
+                val kind = if (r.path != null) "경로 학습" else "출발·도착"
+                RemovableRow("${mode?.label ?: r.mode} · $kind", "$from → $to") { vm.deleteRule(r.id) }
             }
         }
         Spacer(Modifier.height(32.dp))
