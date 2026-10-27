@@ -4,6 +4,7 @@ import com.dot.trace.data.AppDatabase
 import com.dot.trace.data.DayCacheEntity
 import com.dot.trace.data.Geo
 import com.dot.trace.data.ModeRuleEntity
+import com.dot.trace.data.ModeSpanEntity
 import com.dot.trace.data.OverrideEntity
 import com.dot.trace.data.PlaceEntity
 import com.dot.trace.data.PoiNameEntity
@@ -19,6 +20,7 @@ data class Corrections(
     val rules: List<ModeRuleEntity> = emptyList(),
     val places: List<PlaceEntity> = emptyList(),
     val poi: List<PoiNameEntity> = emptyList(),
+    val spans: List<ModeSpanEntity> = emptyList(),
 ) {
     /** 경로를 학습한 규칙과 그 경로 (한 번만 풀어 둔다) */
     val routes: List<Pair<ModeRuleEntity, List<RouteMatcher.LL>>> by lazy {
@@ -39,7 +41,9 @@ object DayAnalyzer {
      * 2) 이동은 같은 출발·도착 규칙이 있으면 그 수단
      * 3) 머문 곳 이름: 직접 고친 이름 > 내 장소(집·회사·자주 가는 곳·기억한 이름) > 지도 상호
      */
-    fun apply(segments: List<Segment>, c: Corrections): List<Segment> = segments.map { seg ->
+    fun apply(segments: List<Segment>, c: Corrections): List<Segment> = applySpans(segments, c.spans).map { seg ->
+        // 탑승~하차로 정한 구간은 그대로
+        if (seg.spanId != null) return@map seg
         val ov = c.overrides.filter { overlaps(seg, it) }.maxByOrNull { overlap(seg, it) }
         if (seg.stay) {
             val place = c.places.match(seg.lat, seg.lng)
@@ -70,6 +74,71 @@ object DayAnalyzer {
                 learned = overridden == null && (routed ?: ruled) != null,
             )
         }
+    }
+
+    /**
+     * 탑승~하차 구간 적용: 그 시간 사이를 한 이동(정한 수단)으로 만들고, 앞뒤는 원래 판단대로 잘라 남긴다.
+     * 머무름으로 판단됐던 부분도 그 사이에 있으면 이동으로 바꾼다 (정류장에서 기다린 시간 등).
+     */
+    fun applySpans(segments: List<Segment>, spans: List<ModeSpanEntity>): List<Segment> {
+        var cur = segments
+        for (sp in spans.sortedBy { it.start }) {
+            val mode = modeOf(sp.mode) ?: continue
+            if (sp.end <= sp.start || cur.none { it.end > sp.start && it.start < sp.end }) continue
+            val before = ArrayList<Segment>()
+            val inside = ArrayList<Segment>()
+            val after = ArrayList<Segment>()
+            for (s in cur) {
+                piece(s, Long.MIN_VALUE, sp.start)?.let { before += it }
+                piece(s, sp.start, sp.end)?.let { inside += it }
+                piece(s, sp.end, Long.MAX_VALUE)?.let { after += it }
+            }
+            if (inside.isEmpty()) continue
+            val pts = inside.flatMap { it.points }.sortedBy { it.time }
+            val first = inside.first(); val last = inside.last()
+            val ride = Segment(
+                points = pts,
+                stay = false,
+                mode = mode,
+                start = maxOf(sp.start, first.start),
+                end = minOf(sp.end, last.end),
+                distanceM = inside.sumOf { if (it.stay) 0.0 else it.distanceM },
+                lat = pts.firstOrNull()?.lat ?: first.lat,
+                lng = pts.firstOrNull()?.lng ?: first.lng,
+                endLat = pts.lastOrNull()?.lat ?: last.endLat,
+                endLng = pts.lastOrNull()?.lng ?: last.endLng,
+                edited = true,
+                spanId = sp.id,
+            )
+            cur = before + ride + after
+        }
+        return cur
+    }
+
+    /** 구간 s 중 [from, to) 시간 부분. 기록 점의 시각이 없으면(저장해 둔 분석) 시간 비율로 나눈다 */
+    private fun piece(s: Segment, from: Long, to: Long): Segment? {
+        val a = maxOf(s.start, from)
+        val b = minOf(s.end, to)
+        if (b <= a) return null
+        if (a == s.start && b == s.end) return s
+        val timed = s.points.any { it.time > 0 }
+        val pts = if (timed) s.points.filter { it.time in a until b } else s.points
+        val frac = (b - a).toDouble() / (s.end - s.start).coerceAtLeast(1)
+        val dist = when {
+            s.stay -> 0.0
+            timed && pts.size >= 2 -> pts.zipWithNext { p, q -> Geo.distance(p.lat, p.lng, q.lat, q.lng).toDouble() }.sum()
+            else -> s.distanceM * frac
+        }
+        return s.copy(
+            points = pts,
+            start = a,
+            end = b,
+            distanceM = dist,
+            lat = if (s.stay) s.lat else pts.firstOrNull()?.lat ?: s.lat,
+            lng = if (s.stay) s.lng else pts.firstOrNull()?.lng ?: s.lng,
+            endLat = if (s.stay) s.lat else pts.lastOrNull()?.lat ?: s.endLat,
+            endLng = if (s.stay) s.lng else pts.lastOrNull()?.lng ?: s.endLng,
+        )
     }
 
     private fun modeOf(name: String): TransportMode? = runCatching { TransportMode.valueOf(name) }.getOrNull()
@@ -128,7 +197,7 @@ class DayStore(private val db: AppDatabase) {
 
     suspend fun corrections(from: Long, to: Long): Corrections {
         val a = db.analysis()
-        return Corrections(a.overridesBetween(from, to), a.rules(), db.places().all(), a.poi())
+        return Corrections(a.overridesBetween(from, to), a.rules(), db.places().all(), a.poi(), a.spansBetween(from, to))
     }
 
     // v2: 이동 구간에는 줄인 경로도 저장 (경로 학습을 리포트에도 적용하려고)

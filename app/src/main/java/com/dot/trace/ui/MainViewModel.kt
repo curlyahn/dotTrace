@@ -83,8 +83,60 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     /** 사용자 수정·학습 규칙·장소 이름 */
     private val corrections: kotlinx.coroutines.flow.Flow<Corrections> = kotlinx.coroutines.flow.combine(
-        analysis.observeOverrides(), analysis.observeRules(), app.db.places().observeAll(), analysis.observePoi(),
-    ) { o, r, p, poi -> Corrections(o, r, p, poi) }
+        analysis.observeOverrides(), analysis.observeRules(), app.db.places().observeAll(), analysis.observePoi(), analysis.observeSpans(),
+    ) { o, r, p, poi, sp -> Corrections(o, r, p, poi, sp) }
+
+    // ── 지도에서 탑승·하차 지정 ──
+
+    /** 방금 '여기서 탑승'으로 만든 구간 (다음 '여기서 하차'가 이 구간의 끝을 정한다) */
+    private val _pendingBoard = MutableStateFlow<com.dot.trace.data.ModeSpanEntity?>(null)
+    val pendingBoard: StateFlow<com.dot.trace.data.ModeSpanEntity?> = _pendingBoard
+
+    /** 이 점에서 탔다: 이후 이 이동이 끝날 때까지(또는 하차를 정할 때까지) 이 수단 */
+    fun boardAt(time: Long, mode: TransportMode) = viewModelScope.launch {
+        val segs = trips.value.segments
+        val cur = segs.firstOrNull { time >= it.start && time <= it.end }
+        // 이동 중이면 그 이동의 끝까지, 머무는 중이면 다음 이동의 끝까지
+        val end = when {
+            cur != null && !cur.stay -> cur.end
+            else -> segs.firstOrNull { !it.stay && it.start >= time }?.end ?: segs.lastOrNull()?.end ?: time
+        }.coerceAtLeast(time + 60_000L)
+        val span = com.dot.trace.data.ModeSpanEntity(start = time, end = end, mode = mode.name)
+        val id = insertSpanReplacing(span)
+        _pendingBoard.value = span.copy(id = id)
+    }
+
+    /** 이 점에서 내렸다: 방금 탑승을 정했으면 그때부터, 아니면 이 이동이 시작된 때부터 여기까지 이 수단 */
+    fun alightAt(time: Long, mode: TransportMode) = viewModelScope.launch {
+        val pending = _pendingBoard.value
+        if (pending != null && time > pending.start) {
+            analysis.deleteSpan(pending.id)
+            insertSpanReplacing(pending.copy(id = 0, end = time, mode = mode.name))
+            _pendingBoard.value = null
+            return@launch
+        }
+        val segs = trips.value.segments
+        val cur = segs.firstOrNull { time >= it.start && time <= it.end }
+        val start = when {
+            cur != null && !cur.stay -> cur.start
+            else -> segs.lastOrNull { !it.stay && it.end <= time }?.start ?: segs.firstOrNull()?.start ?: time
+        }.coerceAtMost(time - 60_000L)
+        insertSpanReplacing(com.dot.trace.data.ModeSpanEntity(start = start, end = time, mode = mode.name))
+        _pendingBoard.value = null
+    }
+
+    fun cancelPendingBoard() { _pendingBoard.value = null }
+
+    fun deleteSpan(id: Long) = viewModelScope.launch {
+        analysis.deleteSpan(id)
+        if (_pendingBoard.value?.id == id) _pendingBoard.value = null
+    }
+
+    /** 겹치는 예전 지정은 지우고 새로 넣는다 */
+    private suspend fun insertSpanReplacing(span: com.dot.trace.data.ModeSpanEntity): Long {
+        analysis.spansBetween(span.start, span.end).forEach { analysis.deleteSpan(it.id) }
+        return analysis.insertSpan(span)
+    }
 
     /** 화면에 보여 줄 하루 정리: 분석 결과 + 사용자 수정 + 이름 */
     val trips: StateFlow<DayTrips> = kotlinx.coroutines.flow.combine(rawTrips, corrections) { t, c ->
@@ -107,8 +159,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     /** 이동 수단 고치기. learn이면 같은 출발·도착 이동은 다음에도 이 수단으로 */
     fun changeMode(seg: Segment, mode: TransportMode, learn: Boolean) = viewModelScope.launch {
-        analysis.deleteOverridesBetween(seg.start + 1, seg.end - 1)
-        analysis.insertOverride(OverrideEntity(start = seg.start, end = seg.end, mode = mode.name))
+        val spanId = seg.spanId
+        if (spanId != null) {
+            // 탑승~하차로 정한 구간이면 그 지정의 수단을 바꾼다
+            analysis.spansBetween(seg.start, seg.end).firstOrNull { it.id == spanId }?.let { analysis.updateSpan(it.copy(mode = mode.name)) }
+        } else {
+            analysis.deleteOverridesBetween(seg.start + 1, seg.end - 1)
+            analysis.insertOverride(OverrideEntity(start = seg.start, end = seg.end, mode = mode.name))
+        }
         if (learn) {
             // 경로 모양도 함께 기억 → 같은 길(버스·셔틀 노선 등)이면 타고 내린 곳이 달라도 알아본다
             val rm = com.dot.trace.trips.RouteMatcher

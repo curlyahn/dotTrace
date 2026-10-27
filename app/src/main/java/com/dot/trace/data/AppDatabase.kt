@@ -132,6 +132,15 @@ interface PlaceDao {
     suspend fun delete(id: Long)
 }
 
+/** 지도에서 정한 탑승~하차 구간: 이 시간 사이는 이 수단으로 이동 (자동 판단보다 우선, 구간을 나눔) */
+@Entity(tableName = "mode_spans", indices = [Index("start")])
+data class ModeSpanEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val start: Long,
+    val end: Long,
+    val mode: String,
+)
+
 /** 사용자가 고친 내용: 이 시간대 구간의 이동 수단 또는 머문 곳 이름 */
 @Entity(tableName = "overrides", indices = [Index("start")])
 data class OverrideEntity(
@@ -232,6 +241,21 @@ interface AnalysisDao {
     @Query("DELETE FROM poi_names WHERE source = 'google'")
     suspend fun deleteGooglePoi(): Int
 
+    @Query("SELECT * FROM mode_spans ORDER BY start")
+    fun observeSpans(): Flow<List<ModeSpanEntity>>
+
+    @Query("SELECT * FROM mode_spans WHERE `end` > :from AND start < :to ORDER BY start")
+    suspend fun spansBetween(from: Long, to: Long): List<ModeSpanEntity>
+
+    @Insert
+    suspend fun insertSpan(s: ModeSpanEntity): Long
+
+    @androidx.room.Update
+    suspend fun updateSpan(s: ModeSpanEntity)
+
+    @Query("DELETE FROM mode_spans WHERE id = :id")
+    suspend fun deleteSpan(id: Long)
+
     @Query("SELECT * FROM day_cache WHERE day = :day")
     suspend fun cached(day: String): DayCacheEntity?
 
@@ -243,8 +267,8 @@ interface AnalysisDao {
 }
 
 @Database(
-    entities = [PointEntity::class, PlaceEntity::class, OverrideEntity::class, ModeRuleEntity::class, PoiNameEntity::class, DayCacheEntity::class],
-    version = 7,
+    entities = [PointEntity::class, PlaceEntity::class, OverrideEntity::class, ModeRuleEntity::class, PoiNameEntity::class, DayCacheEntity::class, ModeSpanEntity::class],
+    version = 8,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -257,7 +281,7 @@ abstract class AppDatabase : RoomDatabase() {
 
         fun get(context: Context): AppDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(context.applicationContext, AppDatabase::class.java, "dottrace.db")
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8)
                 .build()
                 .also { instance = it }
         }
@@ -328,6 +352,17 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE mode_rules ADD COLUMN path TEXT")
                 // 하루 분석 저장 형식이 바뀌었으므로 다시 분석
                 db.execSQL("DELETE FROM day_cache")
+            }
+        }
+
+        /** 탑승~하차 구간 */
+        private val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS mode_spans (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "start INTEGER NOT NULL, `end` INTEGER NOT NULL, mode TEXT NOT NULL)"
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_mode_spans_start ON mode_spans (start)")
             }
         }
     }

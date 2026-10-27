@@ -270,6 +270,29 @@ fun TraceMap(
             }
         }
 
+        // 지도에서 정한 탑승·하차 지점
+        moves.filter { it.spanId != null }.forEach { m ->
+            key("span", m.spanId, m.start) {
+                val c = ModeStyle.color(m.mode)
+                val on = remember(m.mode) { labeledDescriptor(c, Dot.Ink, 7, 2.5f, "${m.mode.label} 탑승", 11f, d) }
+                val off = remember(m.mode) { labeledDescriptor(Color.White, c, 7, 2.5f, "하차", 11f, d) }
+                Marker(
+                    state = remember(m.lat, m.lng) { MarkerState(LatLng(m.lat, m.lng)) },
+                    icon = on.first,
+                    anchor = Offset(0.5f, on.second),
+                    zIndex = 2.5f,
+                    onClick = { true },
+                )
+                Marker(
+                    state = remember(m.endLat, m.endLng) { MarkerState(LatLng(m.endLat, m.endLng)) },
+                    icon = off.first,
+                    anchor = Offset(0.5f, off.second),
+                    zIndex = 2.5f,
+                    onClick = { true },
+                )
+            }
+        }
+
         // 기록 지점
         val inTrip = remember(selectedTrip) { selectedTrip?.points?.map { it.id }?.toHashSet() }
         dots.forEach { p ->

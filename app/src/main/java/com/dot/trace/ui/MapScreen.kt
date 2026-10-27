@@ -122,6 +122,9 @@ fun MapScreen(
     var selectedStay by remember { mutableStateOf<Segment?>(null) }
     var showTimeline by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<Segment?>(null) }
+    // 지도 점에서 '여기서 탑승(true)·하차(false)'를 눌렀을 때 탈것 고르기
+    var modePick by remember { mutableStateOf<Pair<PointEntity, Boolean>?>(null) }
+    val pendingBoard by vm.pendingBoard.collectAsStateWithLifecycle()
     val suggestion by vm.suggestion.collectAsStateWithLifecycle()
     var selectedTrip by remember { mutableStateOf<Segment?>(null) }
     val status by vm.status.collectAsStateWithLifecycle()
@@ -302,6 +305,23 @@ fun MapScreen(
                 Icon(Icons.Rounded.Settings, contentDescription = "설정", tint = Dot.Text)
             }
         }
+        pendingBoard?.let { pb ->
+            val m = runCatching { TransportMode.valueOf(pb.mode) }.getOrNull()
+            Spacer(Modifier.height(10.dp))
+            Surface(shape = RoundedCornerShape(18.dp), color = Dot.Surface.copy(alpha = 0.97f), shadowElevation = 6.dp) {
+                Row(Modifier.padding(start = 14.dp, end = 4.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    m?.let { Icon(ModeStyle.icon(it), null, tint = ModeStyle.color(it), modifier = Modifier.size(18.dp)) }
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        "${m?.label ?: ""} ${SimpleDateFormat("HH:mm", Locale.KOREA).format(Date(pb.start))} 탑승 · 내린 곳의 점을 눌러 '여기서 하차'",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Dot.Text,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = { vm.cancelPendingBoard() }) { Text("완료", color = Dot.Lime) }
+                }
+            }
+        }
         suggestion?.let { sg ->
             Spacer(Modifier.height(10.dp))
             Surface(shape = RoundedCornerShape(18.dp), color = Dot.Surface.copy(alpha = 0.97f), shadowElevation = 6.dp) {
@@ -405,6 +425,8 @@ fun MapScreen(
                 onStop = onStop,
                 collapsed = cardCollapsed,
                 onCollapsedChange = { cardCollapsed = it },
+                onBoard = { p -> modePick = p to true },
+                onAlight = { p -> modePick = p to false },
                 alpha = panelAlpha,
             )
         }
@@ -439,11 +461,32 @@ fun MapScreen(
                 selectedStay = null
             }
         } else {
-            MoveEditDialog(seg, onDismiss = { editing = null }) { mode, learn ->
+            MoveEditDialog(
+                seg,
+                onDismiss = { editing = null },
+                onDeleteSpan = seg.spanId?.let { id -> { vm.deleteSpan(id); editing = null; selectedTrip = null } },
+            ) { mode, learn ->
                 vm.changeMode(seg, mode, learn)
                 editing = null
                 selectedTrip = null
             }
+        }
+    }
+
+    modePick?.let { (p, board) ->
+        val t = SimpleDateFormat("HH:mm", Locale.KOREA).format(Date(p.time))
+        val pendingMode = pendingBoard?.mode?.let { runCatching { TransportMode.valueOf(it) }.getOrNull() }
+        ModePickDialog(
+            title = if (board) "$t 여기서 탑승" else "$t 여기서 하차",
+            body = if (board) "고른 탈것으로 이 점 이후를 표시해요. 내린 곳의 점을 눌러 '여기서 하차'를 정하면 그 사이만 바뀌어요."
+            else if (pendingBoard != null && p.time > pendingBoard!!.start) "탑승한 때부터 이 점까지를 고른 탈것으로 표시해요."
+            else "고른 탈것으로 이 이동의 시작부터 이 점까지를 표시해요.",
+            initial = if (board) null else pendingMode,
+            onDismiss = { modePick = null },
+        ) { m ->
+            if (board) vm.boardAt(p.time, m) else vm.alightAt(p.time, m)
+            modePick = null
+            selected = null
         }
     }
 
@@ -599,6 +642,8 @@ private fun StatusCard(
     onStop: () -> Unit,
     collapsed: Boolean = false,
     onCollapsedChange: (Boolean) -> Unit = {},
+    onBoard: (PointEntity) -> Unit = {},
+    onAlight: (PointEntity) -> Unit = {},
     alpha: Float = 0.96f,
 ) {
     val timeFmt = remember { SimpleDateFormat("HH:mm", Locale.KOREA) }
@@ -713,6 +758,24 @@ private fun StatusCard(
                     IconButton(onClick = onClearSelected) {
                         Icon(Icons.Rounded.Close, contentDescription = "닫기", tint = Dot.Muted)
                     }
+                }
+                // 이 점에서 탈것을 탔다·내렸다
+                Spacer(Modifier.height(10.dp))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(
+                        onClick = { onBoard(selected) },
+                        modifier = Modifier.weight(1f).height(44.dp),
+                        shape = RoundedCornerShape(50),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Dot.Line),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Dot.Text),
+                    ) { Text("여기서 탑승", style = MaterialTheme.typography.labelLarge, maxLines = 1, softWrap = false) }
+                    OutlinedButton(
+                        onClick = { onAlight(selected) },
+                        modifier = Modifier.weight(1f).height(44.dp),
+                        shape = RoundedCornerShape(50),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Dot.Line),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Dot.Text),
+                    ) { Text("여기서 하차", style = MaterialTheme.typography.labelLarge, maxLines = 1, softWrap = false) }
                 }
             } else {
                 // 거리 | 지점 수 (구분선으로 나눈 두 칸)

@@ -60,6 +60,8 @@ data class Segment(
     val nameFromGoogle: Boolean = false,
     /** 학습한 경로·규칙으로 이동 수단을 정했으면 true */
     val learned: Boolean = false,
+    /** 지도에서 정한 탑승~하차 구간이면 그 id */
+    val spanId: Long? = null,
 ) {
     val durationMs: Long get() = end - start
 }

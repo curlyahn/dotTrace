@@ -228,7 +228,12 @@ fun StayEditDialog(seg: Segment, onDismiss: () -> Unit, onSave: (name: String, r
 /** 이동 수단 고치기 */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun MoveEditDialog(seg: Segment, onDismiss: () -> Unit, onSave: (mode: TransportMode, learn: Boolean) -> Unit) {
+fun MoveEditDialog(
+    seg: Segment,
+    onDismiss: () -> Unit,
+    onDeleteSpan: (() -> Unit)? = null,
+    onSave: (mode: TransportMode, learn: Boolean) -> Unit,
+) {
     var mode by remember { mutableStateOf(seg.mode) }
     var learn by remember { mutableStateOf(true) }
     AlertDialog(
@@ -253,6 +258,9 @@ fun MoveEditDialog(seg: Segment, onDismiss: () -> Unit, onSave: (mode: Transport
                 }
                 Spacer(Modifier.height(12.dp))
                 CheckRow("이 경로로 다니는 이동은 다음에도 이 수단으로 (일부 구간만 겹쳐도)", learn) { learn = it }
+                if (seg.spanId != null && onDeleteSpan != null) {
+                    TextButton(onClick = onDeleteSpan) { Text("탑승·하차 지정 지우기", color = Dot.Coral) }
+                }
             }
         },
         confirmButton = { TextButton(onClick = { onSave(mode, learn) }) { Text("저장") } },
@@ -271,4 +279,44 @@ private fun CheckRow(text: String, checked: Boolean, onChange: (Boolean) -> Unit
         )
         Text(text, style = MaterialTheme.typography.bodyMedium, color = Dot.Text)
     }
+}
+
+/** 탈것 고르기 (지도에서 '여기서 탑승·하차') */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun ModePickDialog(
+    title: String,
+    body: String,
+    initial: TransportMode?,
+    onDismiss: () -> Unit,
+    onPick: (TransportMode) -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            Column {
+                Text(body, style = MaterialTheme.typography.bodySmall, color = Dot.Muted)
+                Spacer(Modifier.height(12.dp))
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TransportMode.entries.filter { it != TransportMode.Unknown && it != TransportMode.Walk }.forEach { m ->
+                        val on = m == initial
+                        val c = ModeStyle.color(m)
+                        Row(
+                            Modifier.clip(RoundedCornerShape(50)).background(if (on) c else Dot.Surface2)
+                                .clickable { onPick(m) }.padding(horizontal = 14.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(ModeStyle.icon(m), null, tint = if (on) Dot.Ink else c, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text(m.label, style = MaterialTheme.typography.labelLarge, color = if (on) Dot.Ink else Dot.Text)
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = { TextButton(onClick = onDismiss) { Text("취소") } },
+        containerColor = Dot.Surface,
+    )
 }
