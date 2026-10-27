@@ -20,11 +20,15 @@ data class Settings(
     val mapStyle: String = DEFAULT_MAP_STYLE,
     /** 머문 곳 이름을 Google 장소 정보에서 찾을지 (머문 곳 좌표가 Google로 전송됨) */
     val googlePlaces: Boolean = true,
+    /** 지도 위 카드·버튼의 불투명도 (0.3~1, 낮을수록 투명) */
+    val panelAlpha: Float = DEFAULT_PANEL_ALPHA,
 ) {
     companion object {
         const val DEFAULT_INTERVAL_MINUTES = 1
         val INTERVAL_CHOICES = listOf(1, 2, 3, 5, 10, 15, 30)
         const val DEFAULT_MAP_STYLE = "standard"
+        const val DEFAULT_PANEL_ALPHA = 0.95f
+        const val MIN_PANEL_ALPHA = 0.3f
         /** 지도 스타일과 화면에 보일 이름 */
         val MAP_STYLES = listOf(
             "standard" to "기본",
@@ -54,6 +58,7 @@ class Prefs(context: Context) {
         val reportNotified = androidx.datastore.preferences.core.stringPreferencesKey("report_notified")
         val suggestDismissed = androidx.datastore.preferences.core.stringPreferencesKey("suggest_dismissed")
         val googlePlaces = booleanPreferencesKey("google_places")
+        val panelAlpha = androidx.datastore.preferences.core.floatPreferencesKey("panel_alpha")
         val placesQuota = androidx.datastore.preferences.core.stringPreferencesKey("places_quota")
     }
 
@@ -62,6 +67,7 @@ class Prefs(context: Context) {
             intervalMinutes = (p[K.interval] ?: Settings.DEFAULT_INTERVAL_MINUTES).coerceIn(1, 120),
             trackingEnabled = p[K.tracking] ?: false,
             googlePlaces = p[K.googlePlaces] ?: true,
+            panelAlpha = (p[K.panelAlpha] ?: Settings.DEFAULT_PANEL_ALPHA).coerceIn(Settings.MIN_PANEL_ALPHA, 1f),
             mapStyle = Settings.migrateStyle(p[K.mapStyle])?.takeIf { s -> Settings.MAP_STYLES.any { it.first == s } } ?: Settings.DEFAULT_MAP_STYLE,
         )
     }
@@ -73,6 +79,8 @@ class Prefs(context: Context) {
     suspend fun setTrackingEnabled(enabled: Boolean) = ds.edit { it[K.tracking] = enabled }
 
     suspend fun setMapStyle(style: String) = ds.edit { it[K.mapStyle] = style }
+
+    suspend fun setPanelAlpha(a: Float) = ds.edit { it[K.panelAlpha] = a.coerceIn(Settings.MIN_PANEL_ALPHA, 1f) }
 
     suspend fun setGooglePlaces(on: Boolean) = ds.edit { it[K.googlePlaces] = on }
 

@@ -253,6 +253,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setMapStyle(style: String) = viewModelScope.launch { app.prefs.setMapStyle(style) }
 
+    fun setPanelAlpha(a: Float) = viewModelScope.launch { app.prefs.setPanelAlpha(a) }
+
     // ── Google 장소 이름 ──
 
     /** 끄면 이미 받은 Google 장소 이름도 지운다 */

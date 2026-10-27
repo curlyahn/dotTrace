@@ -163,6 +163,43 @@ fun SettingsScreen(
             }
         }
 
+        // 지도 위 카드·버튼 투명도 (끌 때는 화면에서만 바꾸고, 손을 떼면 저장)
+        var alphaDraft by remember(settings.panelAlpha) { mutableStateOf(settings.panelAlpha) }
+        Column(Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("카드·버튼 투명도", style = MaterialTheme.typography.titleMedium, color = Dot.Text, modifier = Modifier.weight(1f))
+                Text("${((1f - alphaDraft) * 100).toInt()}%", style = MaterialTheme.typography.labelLarge, color = Dot.Lime)
+            }
+            Text(
+                "지도 아래 카드와 확대·축소·현재 위치 버튼을 얼마나 비치게 할지 정해요.",
+                style = MaterialTheme.typography.bodySmall,
+                color = Dot.Muted,
+            )
+            // 미리 보기
+            Box(
+                Modifier.padding(top = 10.dp).fillMaxWidth().height(44.dp).clip(RoundedCornerShape(14.dp))
+                    .background(androidx.compose.ui.graphics.Brush.horizontalGradient(listOf(Color(0xFFE8E2D6), Color(0xFFBFD8A8), Color(0xFFA9CBE8)))),
+                contentAlignment = Alignment.Center,
+            ) {
+                Box(
+                    Modifier.fillMaxWidth(0.7f).height(28.dp).clip(RoundedCornerShape(50)).background(Dot.Surface.copy(alpha = alphaDraft)),
+                    contentAlignment = Alignment.Center,
+                ) { Text("미리 보기", style = MaterialTheme.typography.labelMedium, color = Dot.Text) }
+            }
+            androidx.compose.material3.Slider(
+                // 오른쪽으로 갈수록 투명하게
+                value = 1f - alphaDraft,
+                onValueChange = { alphaDraft = 1f - it },
+                onValueChangeFinished = { vm.setPanelAlpha(alphaDraft) },
+                valueRange = 0f..(1f - Settings.MIN_PANEL_ALPHA),
+                colors = androidx.compose.material3.SliderDefaults.colors(
+                    thumbColor = Dot.Lime,
+                    activeTrackColor = Dot.Lime,
+                    inactiveTrackColor = Dot.Surface2,
+                ),
+            )
+        }
+
         // 머문 곳 이름: Google 장소 정보
         Row(
             Modifier.fillMaxWidth().clickable { vm.setGooglePlaces(!settings.googlePlaces) }

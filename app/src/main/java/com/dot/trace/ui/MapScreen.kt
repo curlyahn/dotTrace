@@ -2,6 +2,10 @@ package com.dot.trace.ui
 
 import android.location.Location
 import androidx.compose.foundation.background
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.animation.animateContentSize
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -187,10 +191,13 @@ fun MapScreen(
     var showPoints by remember { mutableStateOf(false) }
     var mapLoaded by remember { mutableStateOf(false) }
     var fittedFor by remember { mutableStateOf<LocalDate?>(null) }
+    // 아래 카드: 쓸어 내리면 작게, 쓸어 올리면 원래 크기
+    var cardCollapsed by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+    val panelAlpha = settings.panelAlpha
 
     with(density) {
         controller.paddingTop = (WindowInsets.statusBars.getTop(this) + 84.dp.roundToPx())
-        controller.paddingBottom = (WindowInsets.navigationBars.getBottom(this) + (if (moves.isEmpty()) 280.dp else 350.dp).roundToPx())
+        controller.paddingBottom = (WindowInsets.navigationBars.getBottom(this) + (if (cardCollapsed) 120.dp else if (moves.isEmpty()) 280.dp else 350.dp).roundToPx())
         controller.paddingSide = 40.dp.roundToPx()
     }
 
@@ -203,6 +210,7 @@ fun MapScreen(
     val distanceKm = remember(points) { distanceKm(points) }
 
     LaunchedEffect(date) { selected = null; selectedTrip = null; selectedStay = null }
+    LaunchedEffect(selected, selectedStay) { if (selected != null || selectedStay != null) cardCollapsed = false }
 
     // 각 위치가 어느 이동 수단 구간에 속하는지 (점 색칠용)
     val modeOfPoint = remember(moves) {
@@ -339,7 +347,7 @@ fun MapScreen(
             horizontalAlignment = Alignment.End,
         ) {
             // 확대·축소
-            Surface(shape = RoundedCornerShape(24.dp), color = Dot.Surface.copy(alpha = 0.94f), shadowElevation = 6.dp) {
+            Surface(shape = RoundedCornerShape(24.dp), color = Dot.Surface.copy(alpha = panelAlpha), shadowElevation = if (panelAlpha > 0.9f) 6.dp else 0.dp) {
                 Column(Modifier.width(48.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                     Box(
                         Modifier.size(48.dp).clickable { controller.zoomBy(1f) },
@@ -366,7 +374,7 @@ fun MapScreen(
                     }
                     Spacer(Modifier.width(10.dp))
                 }
-                RoundIconButton(onClick = { locate(moveCamera = true) }) {
+                RoundIconButton(onClick = { locate(moveCamera = true) }, alpha = panelAlpha) {
                     if (locating) {
                         CircularProgressIndicator(Modifier.size(22.dp), color = Dot.Lime, strokeWidth = 2.5.dp)
                     } else {
@@ -395,6 +403,9 @@ fun MapScreen(
                 onEditStay = { editing = it },
                 onStart = onStart,
                 onStop = onStop,
+                collapsed = cardCollapsed,
+                onCollapsedChange = { cardCollapsed = it },
+                alpha = panelAlpha,
             )
         }
     }
@@ -557,13 +568,13 @@ private fun freshLocation(context: android.content.Context) =
     )
 
 @Composable
-private fun RoundIconButton(onClick: () -> Unit, content: @Composable () -> Unit) {
+private fun RoundIconButton(onClick: () -> Unit, alpha: Float = 0.94f, content: @Composable () -> Unit) {
     Surface(
         onClick = onClick,
         modifier = Modifier.size(48.dp),
         shape = CircleShape,
-        color = Dot.Surface.copy(alpha = 0.94f),
-        shadowElevation = 6.dp,
+        color = Dot.Surface.copy(alpha = alpha),
+        shadowElevation = if (alpha > 0.9f) 6.dp else 0.dp,
     ) {
         Box(contentAlignment = Alignment.Center) { content() }
     }
@@ -586,6 +597,9 @@ private fun StatusCard(
     onEditStay: (Segment) -> Unit,
     onStart: () -> Unit,
     onStop: () -> Unit,
+    collapsed: Boolean = false,
+    onCollapsedChange: (Boolean) -> Unit = {},
+    alpha: Float = 0.96f,
 ) {
     val timeFmt = remember { SimpleDateFormat("HH:mm", Locale.KOREA) }
     val secFmt = remember { SimpleDateFormat("HH:mm:ss", Locale.KOREA) }
@@ -600,18 +614,56 @@ private fun StatusCard(
         Phase.LocationOff -> Dot.Coral to "휴대폰 위치 설정을 켜 주세요"
     }
 
+    val dragThreshold = with(LocalDensity.current) { 32.dp.toPx() }
     Surface(
-        modifier = Modifier.fillMaxWidth(),
+        // 쓸어 내리면 작게, 쓸어 올리면 원래 크기로
+        modifier = Modifier.fillMaxWidth().pointerInput(collapsed) {
+            var total = 0f
+            detectVerticalDragGestures(
+                onDragStart = { total = 0f },
+                onDragEnd = {
+                    if (!collapsed && total > dragThreshold) onCollapsedChange(true)
+                    else if (collapsed && total < -dragThreshold) onCollapsedChange(false)
+                },
+            ) { change, dy ->
+                total += dy
+                change.consume()
+            }
+        },
         shape = RoundedCornerShape(24.dp),
-        color = Dot.Surface.copy(alpha = 0.96f),
-        shadowElevation = 10.dp,
+        color = Dot.Surface.copy(alpha = alpha),
+        shadowElevation = if (alpha > 0.9f) 10.dp else 0.dp,
     ) {
-        Column(Modifier.padding(20.dp)) {
+        Column(Modifier.animateContentSize().padding(start = 20.dp, end = 20.dp, bottom = if (collapsed) 16.dp else 20.dp)) {
+            // 손잡이: 누르면 접기·펼치기
+            Box(
+                Modifier.fillMaxWidth().clickable { onCollapsedChange(!collapsed) }.padding(top = 8.dp, bottom = 10.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Box(Modifier.width(36.dp).height(4.dp).clip(RoundedCornerShape(50)).background(Dot.Faint))
+            }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.size(10.dp).clip(CircleShape).background(dotColor))
                 Spacer(Modifier.width(10.dp))
-                Text(line, style = MaterialTheme.typography.bodyMedium, color = Dot.Text, modifier = Modifier.weight(1f))
+                Text(
+                    line,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Dot.Text,
+                    modifier = Modifier.weight(1f),
+                    maxLines = if (collapsed) 1 else Int.MAX_VALUE,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (collapsed) {
+                    Spacer(Modifier.width(10.dp))
+                    Text(
+                        "%.1f km".format(Locale.US, distanceKm),
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = Dot.Text,
+                    )
+                }
             }
+            if (!collapsed) {
             Spacer(Modifier.height(14.dp))
 
             if (selectedStay != null && selected == null) {
@@ -720,6 +772,7 @@ private fun StatusCard(
                         colors = ButtonDefaults.buttonColors(containerColor = Dot.Lime, contentColor = Dot.OnLime),
                     ) { Text("기록 시작", style = MaterialTheme.typography.labelLarge, maxLines = 1, softWrap = false) }
                 }
+            }
             }
         }
     }
