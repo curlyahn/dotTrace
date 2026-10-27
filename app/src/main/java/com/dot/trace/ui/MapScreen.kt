@@ -609,7 +609,8 @@ private fun StatusCard(
         Phase.Idle -> Dot.Faint to "기록 꺼짐"
         Phase.Moving -> Dot.Lime to (if (status.inCar) "내 차로 이동 중$last" else "기록 중$last")
         Phase.Still -> Dot.Muted to "머무는 중 · 위치 업데이트 쉬는 중$last"
-        Phase.MovingFast -> Dot.Lime to (if (status.inCar) "내 차로 이동 중 · 15초마다 기록$last" else "빠르게 이동 중 · 15초마다 기록$last")
+        Phase.Walking -> Dot.Lime to "걷는 중 · 20초마다 기록$last"
+        Phase.MovingFast -> Dot.Lime to (if (status.inCar) "내 차로 이동 중 · 10초마다 기록$last" else "이동 중 · 10초마다 기록$last")
         Phase.Searching -> Dot.Amber to "위치 신호 찾는 중 · ${TrackingService.retryLabel(status.retryIntervalMs)}마다 시도$last"
         Phase.LocationOff -> Dot.Coral to "휴대폰 위치 설정을 켜 주세요"
     }

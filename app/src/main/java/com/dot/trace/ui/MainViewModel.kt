@@ -267,7 +267,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun selectDateOf(epochMs: Long) = selectDate(java.time.Instant.ofEpochMilli(epochMs).atZone(zone).toLocalDate())
 
-    fun setInterval(minutes: Int) = viewModelScope.launch { app.prefs.setIntervalMinutes(minutes) }
+    fun setInterval(seconds: Int) = viewModelScope.launch { app.prefs.setIntervalSeconds(seconds) }
 
     fun setMapStyle(style: String) = viewModelScope.launch { app.prefs.setMapStyle(style) }
 

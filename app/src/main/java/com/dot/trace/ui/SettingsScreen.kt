@@ -121,7 +121,7 @@ fun SettingsScreen(
 
         Section("기록 주기")
         Text(
-            "움직이는 동안 위치를 몇 분마다 저장할지 고르세요. 빠르게 이동하면(시속 30km 이상) 15초마다 기록하고, 가만히 있으면 위치 업데이트를 꺼요. 신호가 없으면 10초마다 다시 시도하다가 오래 이어지면 최대 15분 간격까지 늘려요.",
+            "기본 기록 주기예요. 걸을 때는 20초, 차·지하철·자전거 등을 타거나 빠르게 이동할 때는 10초마다 자동으로 기록해 경로를 길 따라 그려요. 가만히 있으면 위치 업데이트를 꺼요. 신호가 없으면 10초마다 다시 시도하다가 오래 이어지면 최대 15분 간격까지 늘려요.",
             style = MaterialTheme.typography.bodySmall,
             color = Dot.Muted,
             modifier = Modifier.padding(horizontal = 20.dp),
@@ -132,9 +132,9 @@ fun SettingsScreen(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Settings.INTERVAL_CHOICES.forEach { m ->
-                val on = settings.intervalMinutes == m
+                val on = settings.intervalSeconds == m
                 Text(
-                    "${m}분",
+                    Settings.intervalLabel(m),
                     style = MaterialTheme.typography.labelLarge,
                     color = if (on) Dot.OnLime else Dot.Text,
                     modifier = Modifier.clip(RoundedCornerShape(50))

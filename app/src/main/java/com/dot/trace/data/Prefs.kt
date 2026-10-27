@@ -12,8 +12,8 @@ import kotlinx.coroutines.flow.map
 private val Context.dataStore by preferencesDataStore(name = "settings")
 
 data class Settings(
-    /** 위치 기록 주기 (분) */
-    val intervalMinutes: Int = DEFAULT_INTERVAL_MINUTES,
+    /** 기본 위치 기록 주기 (초). 걸을 때·탈것을 탈 때는 더 짧게 자동으로 바뀐다 */
+    val intervalSeconds: Int = DEFAULT_INTERVAL_SECONDS,
     /** 사용자가 기록을 켜 둔 상태인지. 재부팅·업데이트 후 자동 재시작 판단에 쓴다. */
     val trackingEnabled: Boolean = false,
     /** 지도 스타일 (standard, silver, night, satellite) */
@@ -27,7 +27,13 @@ data class Settings(
 ) {
     companion object {
         const val DEFAULT_INTERVAL_MINUTES = 1
-        val INTERVAL_CHOICES = listOf(1, 2, 3, 5, 10, 15, 30)
+        const val DEFAULT_INTERVAL_SECONDS = 60
+        val INTERVAL_CHOICES = listOf(30, 60, 300, 600)
+
+        fun intervalLabel(sec: Int) = if (sec < 60) "${sec}초" else "${sec / 60}분"
+
+        /** 고를 수 있는 값 중 가장 가까운 것 */
+        fun snapInterval(sec: Int): Int = INTERVAL_CHOICES.minBy { kotlin.math.abs(it - sec) }
         const val DEFAULT_MAP_STYLE = "standard"
         const val DEFAULT_PANEL_ALPHA = 0.95f
         const val MIN_PANEL_ALPHA = 0.3f
@@ -54,6 +60,7 @@ class Prefs(context: Context) {
 
     private object K {
         val interval = intPreferencesKey("interval_minutes")
+        val intervalSec = intPreferencesKey("interval_seconds")
         val tracking = booleanPreferencesKey("tracking_enabled")
         val mapStyle = androidx.datastore.preferences.core.stringPreferencesKey("map_style")
         val reportSeen = androidx.datastore.preferences.core.stringPreferencesKey("report_seen")
@@ -67,7 +74,8 @@ class Prefs(context: Context) {
 
     val settings: Flow<Settings> = ds.data.map { p ->
         Settings(
-            intervalMinutes = (p[K.interval] ?: Settings.DEFAULT_INTERVAL_MINUTES).coerceIn(1, 120),
+            // 예전 설정(분)이 있으면 가장 가까운 선택지로
+            intervalSeconds = Settings.snapInterval(p[K.intervalSec] ?: p[K.interval]?.let { it * 60 } ?: Settings.DEFAULT_INTERVAL_SECONDS),
             trackingEnabled = p[K.tracking] ?: false,
             googlePlaces = p[K.googlePlaces] ?: true,
             carDevices = p[K.carDevices].orEmpty().mapNotNull { e ->
@@ -81,7 +89,7 @@ class Prefs(context: Context) {
 
     suspend fun current(): Settings = settings.first()
 
-    suspend fun setIntervalMinutes(minutes: Int) = ds.edit { it[K.interval] = minutes.coerceIn(1, 120) }
+    suspend fun setIntervalSeconds(sec: Int) = ds.edit { it[K.intervalSec] = Settings.snapInterval(sec) }
 
     suspend fun setTrackingEnabled(enabled: Boolean) = ds.edit { it[K.tracking] = enabled }
 

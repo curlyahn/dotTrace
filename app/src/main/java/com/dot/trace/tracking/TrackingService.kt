@@ -64,7 +64,8 @@ import java.util.Locale
  *   최근 5분간 위치가 25m 안에만 머무른 것으로 판단한다.
  *   다시 움직이면 활동 인식이나 '큰 움직임 감지' 하드웨어 센서(Significant Motion)가 깨워 준다.
  *   (둘 다 없는 휴대폰에서만 15분에 한 번 확인)
- * - 빠르게 이동 중(시속 30km 이상): 15초마다 기록해 경로를 부드럽게 그린다. 느려지면 원래 주기로.
+ * - 걷는 중: 20초마다 기록해 길을 따라 그린다.
+ * - 탈것(차·지하철·자전거 등)을 타거나 빠르게 이동 중(시속 30km 이상): 10초마다 기록해 경로를 부드럽게 그린다. 느려지면 원래 주기로.
  * - 제때 위치가 오지 않으면(터널·엘리베이터): 처음 3분은 10초마다 다시 시도하고,
  *   계속 안 잡히면 30초 → 1분 → 5분 → 최대 15분 간격으로 점점 늘려 배터리를 아낀다.
  *   잡히면 원래 주기로 돌아간다.
@@ -74,7 +75,7 @@ import java.util.Locale
 @SuppressLint("MissingPermission") // 서비스 시작 전에 화면에서 위치 권한을 확인한다
 class TrackingService : LifecycleService() {
 
-    private enum class Mode { Normal, Fast, Still, Retry }
+    private enum class Mode { Normal, Walk, Fast, Still, Retry }
 
     private val app get() = application as TraceApp
     private lateinit var fused: FusedLocationProviderClient
@@ -115,13 +116,13 @@ class TrackingService : LifecycleService() {
         }
     }
 
-    /** 차에 탔다: 자동차로 기록하고 15초 주기로 */
+    /** 차에 탔다: 자동차로 기록하고 10초 주기로 */
     private fun onCarConnected() {
         if (carConnected) return
         carConnected = true
         updateStatus { it.copy(inCar = true) }
         if (mode == Mode.Still) resumeMoving()
-        if ((mode == Mode.Normal || mode == Mode.Still) && intervalMs > FAST_INTERVAL_MS) applyMode(Mode.Fast)
+        if ((mode == Mode.Normal || mode == Mode.Walk || mode == Mode.Still) && intervalMs > FAST_INTERVAL_MS) applyMode(Mode.Fast)
     }
 
     /** 차에서 내렸다(시동 끔): 주차한 곳을 바로 한 번 남기고 원래 판단으로 */
@@ -191,24 +192,31 @@ class TrackingService : LifecycleService() {
                     currentActivity = null
                     if (mode == Mode.Still) resumeMoving()
                 }
-                // 차량·자전거에 탔다: 15초 주기로 바꿔 정차 패턴과 부드러운 경로를 남긴다
+                // 차량·자전거에 탔다: 10초 주기로 바꿔 정차 패턴과 부드러운 경로를 남긴다
                 DetectedActivity.IN_VEHICLE, DetectedActivity.ON_BICYCLE -> if (enter) {
                     currentActivity = last.activityType
                     if (mode == Mode.Still) resumeMoving()
-                    if (mode == Mode.Normal && intervalMs > FAST_INTERVAL_MS) applyMode(Mode.Fast)
+                    if ((mode == Mode.Normal || mode == Mode.Walk) && intervalMs > FAST_INTERVAL_MS) applyMode(Mode.Fast)
                 }
+                // 걷기 시작: 20초 주기 (내 차에 연결되어 있으면 차 주기 유지)
                 DetectedActivity.WALKING, DetectedActivity.RUNNING -> if (enter) {
                     currentActivity = last.activityType
                     if (mode == Mode.Still) resumeMoving()
-                    if (mode == Mode.Fast) applyMode(Mode.Normal)
+                    if (!carConnected && (mode == Mode.Normal || mode == Mode.Fast)) applyMode(baseMode())
                 }
             }
         }
     }
 
+    /** 걷는 중이면 걷기 주기, 아니면 기본 주기 */
+    private fun baseMode(): Mode {
+        val walking = currentActivity == DetectedActivity.WALKING || currentActivity == DetectedActivity.RUNNING
+        return if (walking && intervalMs > WALK_INTERVAL_MS) Mode.Walk else Mode.Normal
+    }
+
     /** 다시 움직이기 시작: 정상 주기로 돌아가고 출발 지점을 바로 한 번 잡는다 */
     private fun resumeMoving() {
-        applyMode(Mode.Normal)
+        applyMode(baseMode())
         captureNow()
     }
 
@@ -245,7 +253,7 @@ class TrackingService : LifecycleService() {
         if (!started) {
             started = true
             lifecycleScope.launch {
-                intervalMs = app.prefs.current().intervalMinutes * 60_000L
+                intervalMs = app.prefs.current().intervalSeconds * 1_000L
                 lastAcceptedAt = System.currentTimeMillis()
                 applyMode(Mode.Normal)
                 // 시작하자마자 지금 위치를 한 번 남긴다 (첫 정기 기록을 기다리지 않음)
@@ -266,9 +274,9 @@ class TrackingService : LifecycleService() {
                     }
                 }
                 // 기록 중에 주기 설정을 바꾸면 바로 반영
-                app.prefs.settings.map { it.intervalMinutes }.distinctUntilChanged().drop(1).collect { m ->
-                    intervalMs = m * 60_000L
-                    if (mode == Mode.Normal || mode == Mode.Fast) applyMode(mode)
+                app.prefs.settings.map { it.intervalSeconds }.distinctUntilChanged().drop(1).collect { sec ->
+                    intervalMs = sec * 1_000L
+                    if (mode == Mode.Normal || mode == Mode.Walk || mode == Mode.Fast) applyMode(mode)
                 }
             }
         }
@@ -304,7 +312,12 @@ class TrackingService : LifecycleService() {
                 .setMinUpdateIntervalMillis(intervalMs)
                 .setMaxUpdateDelayMillis(intervalMs * 2)
                 .build()
-            // 빠르게 이동 중: 15초마다. 최대 1분치를 모아서 전달 → 매 15초마다 깨지 않음
+            // 걷는 중: 20초마다. 최대 1분치를 모아서 전달 → 매 20초마다 깨지 않음
+            Mode.Walk -> LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, WALK_INTERVAL_MS)
+                .setMinUpdateIntervalMillis(WALK_INTERVAL_MS)
+                .setMaxUpdateDelayMillis(WALK_BATCH_MS)
+                .build()
+            // 탈것·빠르게 이동 중: 10초마다. 최대 1분치를 모아서 전달 → 매 10초마다 깨지 않음
             Mode.Fast -> LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, FAST_INTERVAL_MS)
                 .setMinUpdateIntervalMillis(FAST_INTERVAL_MS)
                 .setMaxUpdateDelayMillis(FAST_BATCH_MS)
@@ -337,6 +350,7 @@ class TrackingService : LifecycleService() {
 
     private fun phaseFor(m: Mode) = when (m) {
         Mode.Normal -> Phase.Moving
+        Mode.Walk -> Phase.Walking
         Mode.Fast -> Phase.MovingFast
         Mode.Still -> Phase.Still
         Mode.Retry -> Phase.Searching
@@ -397,18 +411,18 @@ class TrackingService : LifecycleService() {
 
         val speed = estimateSpeed(prevSaved, toSave)
         when (mode) {
-            Mode.Retry -> applyMode(if (speed >= FAST_ENTER_MPS && intervalMs > FAST_INTERVAL_MS) Mode.Fast else Mode.Normal)
-            Mode.Normal -> {
+            Mode.Retry -> applyMode(if (speed >= FAST_ENTER_MPS && intervalMs > FAST_INTERVAL_MS) Mode.Fast else baseMode())
+            Mode.Normal, Mode.Walk -> {
                 if (speed >= FAST_ENTER_MPS && intervalMs > FAST_INTERVAL_MS) applyMode(Mode.Fast)
                 else detectStill(toSave)
             }
             Mode.Fast -> {
                 // 느려진 상태가 2분 넘게 이어지면 원래 주기로 (신호 대기 등으로 잠깐 멈춘 건 무시).
-                // 활동 인식이 아직 차량·자전거라고 하면(버스 정류장, 정체) 15초 주기를 유지한다.
+                // 활동 인식이 아직 차량·자전거라고 하면(버스 정류장, 정체) 10초 주기를 유지한다.
                 val riding = carConnected || currentActivity == DetectedActivity.IN_VEHICLE || currentActivity == DetectedActivity.ON_BICYCLE
                 if (speed < FAST_EXIT_MPS && !riding) {
                     if (slowSince == 0L) slowSince = newest.time
-                    if (newest.time - slowSince >= FAST_EXIT_AFTER_MS) applyMode(Mode.Normal)
+                    if (newest.time - slowSince >= FAST_EXIT_AFTER_MS) applyMode(baseMode())
                 } else {
                     slowSince = 0L
                 }
@@ -495,8 +509,12 @@ class TrackingService : LifecycleService() {
         }
         val now = System.currentTimeMillis()
         when (mode) {
-            Mode.Normal, Mode.Fast -> {
-                val expected = if (mode == Mode.Fast) FAST_BATCH_MS else intervalMs * 2
+            Mode.Normal, Mode.Walk, Mode.Fast -> {
+                val expected = when (mode) {
+                    Mode.Fast -> FAST_BATCH_MS
+                    Mode.Walk -> WALK_BATCH_MS
+                    else -> intervalMs * 2
+                }
                 val waited = now - maxOf(lastAcceptedAt, modeSince)
                 if (waited > expected + intervalFor(mode) + 15_000L) applyMode(Mode.Retry)
             }
@@ -511,7 +529,11 @@ class TrackingService : LifecycleService() {
         }
     }
 
-    private fun intervalFor(m: Mode) = if (m == Mode.Fast) FAST_INTERVAL_MS else intervalMs
+    private fun intervalFor(m: Mode) = when (m) {
+        Mode.Fast -> FAST_INTERVAL_MS
+        Mode.Walk -> WALK_INTERVAL_MS
+        else -> intervalMs
+    }
 
     /** 신호 없는 상태가 이어진 시간에 따른 재시도 간격. 오래 갇혀 있어도 최대 15분 간격이라 배터리를 거의 쓰지 않는다. */
     private fun retryIntervalFor(elapsedMs: Long): Long = when {
@@ -582,7 +604,8 @@ class TrackingService : LifecycleService() {
         val last = s.lastFixAt?.let { " · 마지막 ${timeFmt.format(Date(it))}" } ?: ""
         return when (s.phase) {
             Phase.Moving -> "기록 중$last"
-            Phase.MovingFast -> "빠르게 이동 중 · 15초마다 기록$last"
+            Phase.Walking -> "걷는 중 · 20초마다 기록$last"
+            Phase.MovingFast -> (if (s.inCar) "내 차로 이동 중" else "이동 중") + " · 10초마다 기록$last"
             Phase.Still -> "머무는 중 · 위치 업데이트 쉬는 중$last"
             Phase.Searching -> "위치 신호 찾는 중 · ${retryLabel(s.retryIntervalMs)}마다 시도$last"
             Phase.LocationOff -> "휴대폰 위치 설정이 꺼져 있어요"
@@ -645,8 +668,11 @@ class TrackingService : LifecycleService() {
         /** 신호를 잃었을 때 처음 재시도 간격과 최대 간격 */
         const val RETRY_INTERVAL_MS = 10_000L
         const val RETRY_MAX_INTERVAL_MS = 15 * 60_000L
-        /** 빠른 이동: 시속 30km 이상이면 15초마다, 시속 20km 아래로 2분 넘게 내려가면 원래대로 */
-        const val FAST_INTERVAL_MS = 15_000L
+        /** 탈것·빠른 이동: 차량·자전거 인식 또는 시속 30km 이상이면 10초마다, 시속 20km 아래로 2분 넘게 내려가면 원래대로 */
+        const val FAST_INTERVAL_MS = 10_000L
+        /** 걷는 중: 20초마다 (걸음 약 25m마다 한 점) */
+        const val WALK_INTERVAL_MS = 20_000L
+        const val WALK_BATCH_MS = 60_000L
         const val FAST_BATCH_MS = 60_000L
         const val FAST_ENTER_MPS = 30f / 3.6f
         const val FAST_EXIT_MPS = 20f / 3.6f
