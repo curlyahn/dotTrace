@@ -259,7 +259,7 @@ fun MoveEditDialog(
                 Spacer(Modifier.height(12.dp))
                 CheckRow("이 경로로 다니는 이동은 다음에도 이 수단으로 (일부 구간만 겹쳐도)", learn) { learn = it }
                 if (seg.spanId != null && onDeleteSpan != null) {
-                    TextButton(onClick = onDeleteSpan) { Text("탑승·하차 지정 지우기", color = Dot.Coral) }
+                    TextButton(onClick = onDeleteSpan) { Text("지도에서 고른 수단 지우기", color = Dot.Coral) }
                 }
             }
         },
@@ -281,7 +281,7 @@ private fun CheckRow(text: String, checked: Boolean, onChange: (Boolean) -> Unit
     }
 }
 
-/** 탈것 고르기 (지도에서 '여기서 탑승·하차') */
+/** 이동 수단 고르기 (지도에서 점을 눌렀을 때) */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ModePickDialog(
@@ -299,7 +299,7 @@ fun ModePickDialog(
                 Text(body, style = MaterialTheme.typography.bodySmall, color = Dot.Muted)
                 Spacer(Modifier.height(12.dp))
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TransportMode.entries.filter { it != TransportMode.Unknown && it != TransportMode.Walk }.forEach { m ->
+                    TransportMode.entries.filter { it != TransportMode.Unknown }.forEach { m ->
                         val on = m == initial
                         val c = ModeStyle.color(m)
                         Row(

@@ -86,50 +86,46 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         analysis.observeOverrides(), analysis.observeRules(), app.db.places().observeAll(), analysis.observePoi(), analysis.observeSpans(),
     ) { o, r, p, poi, sp -> Corrections(o, r, p, poi, sp) }
 
-    // ── 지도에서 탑승·하차 지정 ──
+    // ── 지도에서 점의 이동 수단 지정 ──
 
-    /** 방금 '여기서 탑승'으로 만든 구간 (다음 '여기서 하차'가 이 구간의 끝을 정한다) */
-    private val _pendingBoard = MutableStateFlow<com.dot.trace.data.ModeSpanEntity?>(null)
-    val pendingBoard: StateFlow<com.dot.trace.data.ModeSpanEntity?> = _pendingBoard
-
-    /** 이 점에서 탔다: 이후 이 이동이 끝날 때까지(또는 하차를 정할 때까지) 이 수단 */
-    fun boardAt(time: Long, mode: TransportMode) = viewModelScope.launch {
+    /**
+     * 이 점을 고른 수단으로 표시한다.
+     * 앞뒤 5분 안에 같은 수단 구간이 있으면 그 구간까지 이어서 하나로 합친다
+     * (예: 버스–걷기(신호 대기)–버스로 끊긴 가운데 점을 버스로 고르면 버스 하나로).
+     */
+    fun setPointMode(p: PointEntity, mode: TransportMode) = viewModelScope.launch {
+        val pts = day.value.points
         val segs = trips.value.segments
-        val cur = segs.firstOrNull { time >= it.start && time <= it.end }
-        // 이동 중이면 그 이동의 끝까지, 머무는 중이면 다음 이동의 끝까지
-        val end = when {
-            cur != null && !cur.stay -> cur.end
-            else -> segs.firstOrNull { !it.stay && it.start >= time }?.end ?: segs.lastOrNull()?.end ?: time
-        }.coerceAtLeast(time + 60_000L)
-        val span = com.dot.trace.data.ModeSpanEntity(start = time, end = end, mode = mode.name)
-        val id = insertSpanReplacing(span)
-        _pendingBoard.value = span.copy(id = id)
+        val t = p.time
+        val i = pts.indexOfFirst { it.id == p.id }
+        // 이 점만: 앞뒤 점과의 가운데까지
+        var start = pts.getOrNull(i - 1)?.let { (it.time + t) / 2 } ?: (t - 30_000L)
+        var end = pts.getOrNull(i + 1)?.let { (t + it.time) / 2 } ?: (t + 30_000L)
+        val near = MERGE_GAP_MS
+        segs.lastOrNull { !it.stay && it.mode == mode && it.start < t && t - it.end <= near }?.let { start = minOf(start, it.start) }
+        segs.firstOrNull { !it.stay && it.mode == mode && it.end > t && it.start - t <= near }?.let { end = maxOf(end, it.end) }
+        insertSpanMerging(com.dot.trace.data.ModeSpanEntity(start = start, end = end, mode = mode.name))
     }
 
-    /** 이 점에서 내렸다: 방금 탑승을 정했으면 그때부터, 아니면 이 이동이 시작된 때부터 여기까지 이 수단 */
-    fun alightAt(time: Long, mode: TransportMode) = viewModelScope.launch {
-        val pending = _pendingBoard.value
-        if (pending != null && time > pending.start) {
-            analysis.deleteSpan(pending.id)
-            insertSpanReplacing(pending.copy(id = 0, end = time, mode = mode.name))
-            _pendingBoard.value = null
-            return@launch
+    /** 같은 수단 지정과 겹치거나 맞닿으면 하나로 합치고, 다른 수단 지정과 겹친 부분은 잘라 낸다 */
+    private suspend fun insertSpanMerging(span: com.dot.trace.data.ModeSpanEntity) {
+        var start = span.start
+        var end = span.end
+        val touching = analysis.spansBetween(start - MERGE_GAP_MS, end + MERGE_GAP_MS)
+        for (o in touching.filter { it.mode == span.mode }) {
+            start = minOf(start, o.start); end = maxOf(end, o.end)
+            analysis.deleteSpan(o.id)
         }
-        val segs = trips.value.segments
-        val cur = segs.firstOrNull { time >= it.start && time <= it.end }
-        val start = when {
-            cur != null && !cur.stay -> cur.start
-            else -> segs.lastOrNull { !it.stay && it.end <= time }?.start ?: segs.firstOrNull()?.start ?: time
-        }.coerceAtMost(time - 60_000L)
-        insertSpanReplacing(com.dot.trace.data.ModeSpanEntity(start = start, end = time, mode = mode.name))
-        _pendingBoard.value = null
+        for (o in analysis.spansBetween(start, end)) {
+            analysis.deleteSpan(o.id)
+            if (o.start < start) analysis.insertSpan(o.copy(id = 0, end = start))
+            if (o.end > end) analysis.insertSpan(o.copy(id = 0, start = end))
+        }
+        analysis.insertSpan(span.copy(id = 0, start = start, end = end))
     }
-
-    fun cancelPendingBoard() { _pendingBoard.value = null }
 
     fun deleteSpan(id: Long) = viewModelScope.launch {
         analysis.deleteSpan(id)
-        if (_pendingBoard.value?.id == id) _pendingBoard.value = null
     }
 
     /** 겹치는 예전 지정은 지우고 새로 넣는다 */
@@ -410,5 +406,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     companion object {
         /** 장소 조회는 하루 최대 100번 (무료 사용량 안에서) */
         const val PLACES_DAILY_LIMIT = 100
+        /** 점의 수단을 고를 때 이 시간 안의 같은 수단 구간과 합친다 */
+        const val MERGE_GAP_MS = 5 * 60_000L
     }
 }
