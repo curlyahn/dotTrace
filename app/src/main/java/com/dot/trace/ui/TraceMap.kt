@@ -13,6 +13,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
@@ -92,6 +95,12 @@ class MapController {
         go(if (delta > 0) CameraUpdateFactory.zoomIn() else CameraUpdateFactory.zoomOut(), animate = true, ms = 250)
     }
 
+    /** 마우스 휠: 커서가 있는 곳을 중심으로 확대·축소 */
+    fun zoomAround(amount: Float, x: Float, y: Float) {
+        if (state == null) return
+        go(CameraUpdateFactory.zoomBy(amount, android.graphics.Point(x.toInt(), y.toInt())), animate = true, ms = 150)
+    }
+
     fun focusAt(lat: Double, lng: Double) =
         fit(listOf(PointEntity(time = 0, lat = lat, lng = lng, accuracy = null, altitude = null, speed = null)))
 
@@ -166,7 +175,20 @@ fun TraceMap(
     }
 
     GoogleMap(
-        modifier = modifier,
+        // 마우스 휠로 확대·축소 (위로 굴리면 확대)
+        modifier = modifier.pointerInput(Unit) {
+            awaitPointerEventScope {
+                while (true) {
+                    val e = awaitPointerEvent(PointerEventPass.Initial)
+                    if (e.type != PointerEventType.Scroll) continue
+                    val ch = e.changes.firstOrNull() ?: continue
+                    val dy = ch.scrollDelta.y
+                    if (dy == 0f) continue
+                    controller.zoomAround(-dy.coerceIn(-3f, 3f) * 0.6f, ch.position.x, ch.position.y)
+                    e.changes.forEach { it.consume() }
+                }
+            }
+        },
         cameraPositionState = cameraState,
         properties = MapProperties(
             mapType = if (styleName == "satellite") MapType.HYBRID else MapType.NORMAL,

@@ -70,6 +70,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
@@ -349,17 +350,22 @@ fun MapScreen(
             horizontalAlignment = Alignment.End,
         ) {
             // 확대·축소
-            Surface(shape = RoundedCornerShape(24.dp), color = Dot.Surface.copy(alpha = panelAlpha), shadowElevation = if (panelAlpha > 0.9f) 6.dp else 0.dp) {
+            Surface(
+                shape = RoundedCornerShape(24.dp),
+                color = Dot.Surface.copy(alpha = panelAlpha),
+                shadowElevation = if (panelAlpha > 0.9f) 6.dp else 0.dp,
+                border = androidx.compose.foundation.BorderStroke(1.5.dp, Dot.Lime.copy(alpha = 0.55f)),
+            ) {
                 Column(Modifier.width(48.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                     Box(
                         Modifier.size(48.dp).clickable { controller.zoomBy(1f) },
                         contentAlignment = Alignment.Center,
-                    ) { Icon(Icons.Rounded.Add, contentDescription = "확대", tint = Dot.Text) }
+                    ) { Icon(Icons.Rounded.Add, contentDescription = "확대", tint = Dot.Lime) }
                     Box(Modifier.width(24.dp).height(1.dp).background(Dot.Line))
                     Box(
                         Modifier.size(48.dp).clickable { controller.zoomBy(-1f) },
                         contentAlignment = Alignment.Center,
-                    ) { Icon(Icons.Rounded.Remove, contentDescription = "축소", tint = Dot.Text) }
+                    ) { Icon(Icons.Rounded.Remove, contentDescription = "축소", tint = Dot.Lime) }
                 }
             }
             Spacer(Modifier.height(10.dp))
@@ -662,10 +668,15 @@ private fun StatusCard(
         Column(Modifier.animateContentSize().padding(start = 20.dp, end = 20.dp, bottom = if (collapsed) 16.dp else 20.dp)) {
             // 손잡이: 누르면 접기·펼치기
             Box(
-                Modifier.fillMaxWidth().clickable { onCollapsedChange(!collapsed) }.padding(top = 8.dp, bottom = 10.dp),
+                Modifier.fillMaxWidth().clickable { onCollapsedChange(!collapsed) }.padding(top = 10.dp, bottom = 12.dp),
                 contentAlignment = Alignment.Center,
             ) {
-                Box(Modifier.width(36.dp).height(4.dp).clip(RoundedCornerShape(50)).background(Dot.Faint))
+                // 연두 손잡이 (은은하게 빛나게)
+                Box(
+                    Modifier.width(56.dp).height(8.dp)
+                        .shadow(8.dp, RoundedCornerShape(50), ambientColor = Dot.Lime, spotColor = Dot.Lime)
+                        .clip(RoundedCornerShape(50)).background(Dot.Lime),
+                )
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.size(10.dp).clip(CircleShape).background(dotColor))
