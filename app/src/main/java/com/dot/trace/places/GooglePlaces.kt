@@ -37,13 +37,24 @@ object GooglePlaces {
     @Volatile var lastError: String? = null
         private set
 
-    suspend fun nearest(context: Context, lat: Double, lng: Double, radiusM: Double = 70.0): FoundPlace? = withContext(Dispatchers.IO) {
+    /** 근처 지하철·전철역 (없으면 null) */
+    suspend fun nearestStation(context: Context, lat: Double, lng: Double): FoundPlace? =
+        nearest(context, lat, lng, 500.0, listOf("subway_station", "train_station", "light_rail_station"))
+
+    suspend fun nearest(
+        context: Context,
+        lat: Double,
+        lng: Double,
+        radiusM: Double = 70.0,
+        includedTypes: List<String>? = null,
+    ): FoundPlace? = withContext(Dispatchers.IO) {
         if (!available) return@withContext null
         runCatching {
             val body = JSONObject()
                 .put("maxResultCount", 5)
                 .put("rankPreference", "DISTANCE")
                 .put("languageCode", "ko")
+                .apply { includedTypes?.let { put("includedTypes", JSONArray(it)) } }
                 .put(
                     "locationRestriction",
                     JSONObject().put(
@@ -80,7 +91,7 @@ object GooglePlaces {
                 .filter { p ->
                     val types = p.optJSONArray("types")
                     val list = if (types == null) emptyList() else (0 until types.length()).map { types.getString(it) }
-                    list.none { it in SKIP_TYPES }
+                    includedTypes != null || list.none { it in SKIP_TYPES }
                 }
                 .mapNotNull { p ->
                     val name = p.optJSONObject("displayName")?.optString("text")?.takeIf { it.isNotBlank() } ?: return@mapNotNull null

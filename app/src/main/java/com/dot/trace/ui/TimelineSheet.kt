@@ -1,6 +1,9 @@
 package com.dot.trace.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.material.icons.rounded.KeyboardArrowDown
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -61,33 +64,56 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-/** 하루 타임라인: 머문 곳과 이동을 시간순으로. 누르면 지도에서, 연필로 고치기 */
-@OptIn(ExperimentalMaterial3Api::class)
+/**
+ * 하루 타임라인 (화면 전체): 아래 카드가 커지면서 열린다.
+ * 머문 곳과 이동을 시간순으로. 누르면 지도에서, 연필로 고치기
+ */
 @Composable
-fun TimelineSheet(
+fun TimelinePanel(
+    title: String,
     segments: List<Segment>,
-    onDismiss: () -> Unit,
+    onClose: () -> Unit,
     onPick: (Segment) -> Unit,
     onEdit: (Segment) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false),
-        containerColor = Dot.Surface,
+    androidx.activity.compose.BackHandler(onBack = onClose)
+    val moves = segments.filter { !it.stay }
+    val km = moves.sumOf { it.distanceM } / 1000
+    val moveMs = moves.sumOf { it.durationMs }
+    androidx.compose.material3.Surface(
+        modifier = modifier.fillMaxSize(),
+        color = Dot.Surface,
         contentColor = Dot.Text,
     ) {
-        Column(Modifier.navigationBarsPadding()) {
-            Text(
-                "하루 타임라인",
-                style = MaterialTheme.typography.titleLarge,
-                color = Dot.Text,
-                modifier = Modifier.padding(start = 20.dp, end = 20.dp, bottom = 4.dp),
-            )
+        Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
+            // 위: 접기 손잡이 + 제목 + 닫기
+            Box(
+                Modifier.fillMaxWidth().clickable(onClick = onClose).padding(top = 10.dp, bottom = 6.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Box(Modifier.width(56.dp).height(8.dp).clip(RoundedCornerShape(50)).background(Dot.Lime))
+            }
+            Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("하루 타임라인", style = MaterialTheme.typography.titleLarge, color = Dot.Text, fontWeight = FontWeight.Bold)
+                    Text(title, style = MaterialTheme.typography.bodySmall, color = Dot.Muted)
+                }
+                IconButton(onClick = onClose) {
+                    Icon(Icons.Rounded.KeyboardArrowDown, contentDescription = "닫기", tint = Dot.Text)
+                }
+            }
+            // 요약
+            Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                SummaryTile("이동 거리", "%.1f km".format(Locale.US, km), Modifier.weight(1f))
+                SummaryTile("이동 시간", durationText(moveMs), Modifier.weight(1f))
+                SummaryTile("머문 곳", "${segments.count { it.stay }}곳", Modifier.weight(1f))
+            }
             Text(
                 "누르면 지도에서 보여 주고, 연필을 누르면 이름이나 이동 수단을 고칠 수 있어요. 고친 내용은 다음에도 기억해요.",
                 style = MaterialTheme.typography.bodySmall,
                 color = Dot.Muted,
-                modifier = Modifier.padding(start = 20.dp, end = 20.dp, bottom = 12.dp),
+                modifier = Modifier.padding(start = 20.dp, end = 20.dp, bottom = 8.dp),
             )
             if (segments.isEmpty()) {
                 Text(
@@ -97,22 +123,31 @@ fun TimelineSheet(
                     modifier = Modifier.padding(20.dp),
                 )
             }
-            LazyColumn(Modifier.heightIn(max = 560.dp)) {
+            LazyColumn(Modifier.weight(1f)) {
                 itemsIndexed(segments, key = { _, s -> "${s.stay}-${s.start}" }) { i, s ->
                     TimelineRow(s, first = i == 0, last = i == segments.lastIndex, onClick = { onPick(s) }, onEdit = { onEdit(s) })
                 }
+                // Google 장소 정보로 붙인 이름이 있으면 출처 표시
+                if (segments.any { it.nameFromGoogle }) {
+                    item {
+                        Text(
+                            "장소 이름 일부: Google Maps",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Dot.Faint,
+                            modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 16.dp),
+                        )
+                    }
+                }
             }
-            // Google 장소 정보로 붙인 이름이 있으면 출처 표시
-            if (segments.any { it.nameFromGoogle }) {
-                Text(
-                    "장소 이름 일부: Google Maps",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = Dot.Faint,
-                    modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 8.dp),
-                )
-            }
-            Spacer(Modifier.height(12.dp))
         }
+    }
+}
+
+@Composable
+private fun SummaryTile(label: String, value: String, modifier: Modifier = Modifier) {
+    Column(modifier.clip(RoundedCornerShape(16.dp)).background(Dot.Surface2).padding(horizontal = 12.dp, vertical = 10.dp)) {
+        Text(value, style = MaterialTheme.typography.titleMedium, color = Dot.Text, fontWeight = FontWeight.Bold, maxLines = 1)
+        Text(label, style = MaterialTheme.typography.labelSmall, color = Dot.Muted)
     }
 }
 

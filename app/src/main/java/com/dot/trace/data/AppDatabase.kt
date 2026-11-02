@@ -185,6 +185,8 @@ data class PoiNameEntity(
     companion object {
         const val SOURCE_MAP = "map"
         const val SOURCE_GOOGLE = "google"
+        /** Google 장소 정보로 찾은 근처 지하철역 (name이 비어 있으면 근처에 역 없음) */
+        const val SOURCE_STATION = "station"
         /** Google 장소 정보는 30일까지만 보관 */
         const val GOOGLE_KEEP_MS = 30L * 24 * 3_600_000
     }
@@ -235,10 +237,10 @@ interface AnalysisDao {
     suspend fun putPoi(p: PoiNameEntity)
 
     /** 오래된 Google 장소 이름 지우기 */
-    @Query("DELETE FROM poi_names WHERE source = 'google' AND fetchedAt < :before")
+    @Query("DELETE FROM poi_names WHERE source IN ('google', 'station') AND fetchedAt < :before")
     suspend fun purgeGooglePoi(before: Long): Int
 
-    @Query("DELETE FROM poi_names WHERE source = 'google'")
+    @Query("DELETE FROM poi_names WHERE source IN ('google', 'station')")
     suspend fun deleteGooglePoi(): Int
 
     @Query("SELECT * FROM mode_spans ORDER BY start")

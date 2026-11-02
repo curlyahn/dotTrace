@@ -134,6 +134,8 @@ fun TraceMap(
     /** 머문 곳: 점 여러 개 대신 원 하나 + 이름·머문 시간 */
     stays: List<Segment> = emptyList(),
     onStayClick: ((Segment) -> Unit)? = null,
+    /** '여기서 탑승'을 누른 곳 (하차를 정할 때까지 표시) */
+    boardingAt: Pair<LatLng, String>? = null,
 ) {
     val context = LocalContext.current
     val density = LocalDensity.current
@@ -288,6 +290,19 @@ fun TraceMap(
                     anchor = Offset(0.5f, icon.second),
                     zIndex = 2f,
                     onClick = { onStayClick?.invoke(st); true },
+                )
+            }
+        }
+
+        boardingAt?.let { (ll, label) ->
+            key("boarding", ll.latitude, ll.longitude, label) {
+                val icon = remember(label) { labeledDescriptor(Dot.Lime, Dot.Ink, 9, 3f, label, 12f, d) }
+                Marker(
+                    state = remember(ll) { MarkerState(ll) },
+                    icon = icon.first,
+                    anchor = Offset(0.5f, icon.second),
+                    zIndex = 6f,
+                    onClick = { true },
                 )
             }
         }

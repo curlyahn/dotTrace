@@ -49,7 +49,7 @@ object DayAnalyzer {
             val place = c.places.match(seg.lat, seg.lng)
             // Google 장소 이름이 있으면 먼저, 없으면 예전 지도에서 찾은 이름
             val near = c.poi.map { it to Geo.distance(seg.lat, seg.lng, it.lat, it.lng) }
-                .filter { it.second <= POI_RADIUS_M && it.first.name.isNotBlank() }
+                .filter { it.second <= POI_RADIUS_M && it.first.name.isNotBlank() && it.first.source != PoiNameEntity.SOURCE_STATION }
             val poi = (near.filter { it.first.source == PoiNameEntity.SOURCE_GOOGLE }.minByOrNull { it.second }
                 ?: near.minByOrNull { it.second })?.first
             val name = ov?.name ?: place?.name ?: poi?.name
@@ -68,8 +68,10 @@ object DayAnalyzer {
                 Geo.distance(seg.lat, seg.lng, it.startLat, it.startLng) <= RULE_RADIUS_M &&
                     Geo.distance(seg.endLat, seg.endLng, it.endLat, it.endLng) <= RULE_RADIUS_M
             }?.let { modeOf(it.mode) } else null
+            // 3) 지하철 판단은 출발·도착 근처에 역이 있는지로 확인
+            val stationed = if (overridden == null && routed == null && ruled == null) stationMode(seg, c) else null
             seg.copy(
-                mode = overridden ?: routed ?: ruled ?: seg.mode,
+                mode = overridden ?: routed ?: ruled ?: stationed ?: seg.mode,
                 edited = overridden != null,
                 learned = overridden == null && (routed ?: ruled) != null,
             )
@@ -141,6 +143,40 @@ object DayAnalyzer {
         )
     }
 
+    /** 근처(STATION_NEAR_M 안)에 지하철역이 있는지: 있음 true, 없음 false, 아직 모름 null */
+    fun stationNear(lat: Double, lng: Double, c: Corrections): Boolean? {
+        val near = c.poi.filter { it.source == PoiNameEntity.SOURCE_STATION && Geo.distance(lat, lng, it.lat, it.lng) <= STATION_QUERY_M }
+        if (near.isEmpty()) return null
+        return near.any { it.name.isNotBlank() }
+    }
+
+    /** 이동 중 위치가 끊겨 있던 시간의 비율 (지하 구간) */
+    fun lostShare(seg: Segment): Double {
+        if (seg.durationMs <= 0) return 0.0
+        val lost = seg.points.sumOf { it.lostMs ?: 0L } +
+            seg.points.zipWithNext().sumOf { (a, b) -> if (b.time - a.time > 3 * 60_000L) b.time - a.time else 0L }
+        return lost.toDouble() / seg.durationMs
+    }
+
+    /**
+     * 지하철 확인:
+     * - 지하철로 판단했는데 출발·도착 어디에도 역이 없으면 자가용으로
+     * - 차량으로 판단했지만 출발·도착 모두 역 근처이고 오래 신호가 끊겼으면 지하철로
+     */
+    private fun stationMode(seg: Segment, c: Corrections): TransportMode? {
+        val a = stationNear(seg.lat, seg.lng, c)
+        val b = stationNear(seg.endLat, seg.endLng, c)
+        return when (seg.mode) {
+            TransportMode.Subway -> if (a == false && b == false) TransportMode.Car else null
+            TransportMode.Car, TransportMode.Bus, TransportMode.Unknown ->
+                if (a == true && b == true && lostShare(seg) >= 0.3) TransportMode.Subway else null
+            else -> null
+        }
+    }
+
+    /** 지하철역 조회는 출발·도착점에서 이 거리 안에 이미 물어본 결과가 있으면 다시 쓴다 */
+    const val STATION_QUERY_M = 200f
+
     private fun modeOf(name: String): TransportMode? = runCatching { TransportMode.valueOf(name) }.getOrNull()
 
     private fun routeMode(seg: Segment, c: Corrections): TransportMode? {
@@ -148,10 +184,13 @@ object DayAnalyzer {
         val hours = seg.durationMs / 3_600_000.0
         val kmh = if (hours > 0) seg.distanceM / 1000 / hours else 0.0
         val path = RouteMatcher.simplify(seg.points)
+        val carShare = seg.points.count { it.activity == ActivityCode.CAR }.toDouble() / seg.points.size
         return c.routes.asSequence()
             .mapNotNull { (rule, learned) ->
                 val m = modeOf(rule.mode) ?: return@mapNotNull null
                 if (!RouteMatcher.speedFits(m, kmh)) return@mapNotNull null
+                // 내 차 블루투스로 자동차라고 확실한 이동은 버스 노선과 겹쳐도 버스로 바꾸지 않는다
+                if (m == TransportMode.Bus && carShare >= 0.5) return@mapNotNull null
                 m to RouteMatcher.overlap(path, learned)
             }
             .filter { it.second >= RouteMatcher.MIN_OVERLAP }
@@ -202,7 +241,7 @@ class DayStore(private val db: AppDatabase) {
 
     // v2: 이동 구간에는 줄인 경로도 저장 (경로 학습을 리포트에도 적용하려고)
     private fun encode(segs: List<Segment>): String = buildString {
-        append("v3\n")
+        append("v4\n")
         for (s in segs) {
             append(if (s.stay) 's' else 'm').append('|')
             append(s.start).append('|').append(s.end).append('|').append(s.mode.name).append('|')
@@ -215,7 +254,7 @@ class DayStore(private val db: AppDatabase) {
 
     private fun decode(data: String): List<Segment>? = runCatching {
         val lines = data.lines()
-        if (lines.firstOrNull() != "v3") return null
+        if (lines.firstOrNull() != "v4") return null
         lines.drop(1).filter { it.isNotBlank() }.map { l ->
             val f = l.split('|')
             val path = RouteMatcher.decode(f.getOrNull(9)?.takeIf { it.isNotEmpty() })

@@ -124,7 +124,9 @@ fun MapScreen(
     var showTimeline by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<Segment?>(null) }
     // 지도 점의 이동 수단 고르기
-    var modePick by remember { mutableStateOf<PointEntity?>(null) }
+    // (점, 탑승인지) — 탑승이면 고른 수단으로 A~B 지정을 시작
+    var modePick by remember { mutableStateOf<Pair<PointEntity, Boolean>?>(null) }
+    val boarding by vm.boarding.collectAsStateWithLifecycle()
     val suggestion by vm.suggestion.collectAsStateWithLifecycle()
     var selectedTrip by remember { mutableStateOf<Segment?>(null) }
     val status by vm.status.collectAsStateWithLifecycle()
@@ -265,6 +267,7 @@ fun MapScreen(
             onStayClick = { st -> selectedStay = st; selected = null; selectedTrip = null },
             styleName = settings.mapStyle,
             places = places,
+            boardingAt = boarding?.let { com.google.android.gms.maps.model.LatLng(it.lat, it.lng) to "${it.mode.label} 탑승" },
             me = me,
             onReady = { mapLoaded = true },
             modifier = Modifier.fillMaxSize(),
@@ -303,6 +306,27 @@ fun MapScreen(
             Spacer(Modifier.width(8.dp))
             RoundIconButton(onClick = onOpenSettings) {
                 Icon(Icons.Rounded.Settings, contentDescription = "설정", tint = Dot.Text)
+            }
+        }
+        boarding?.let { bd ->
+            Spacer(Modifier.height(10.dp))
+            Surface(
+                shape = RoundedCornerShape(18.dp),
+                color = Dot.Surface.copy(alpha = 0.97f),
+                shadowElevation = 6.dp,
+                border = androidx.compose.foundation.BorderStroke(1.dp, Dot.Lime.copy(alpha = 0.6f)),
+            ) {
+                Row(Modifier.padding(start = 14.dp, end = 4.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(ModeStyle.icon(bd.mode), null, tint = ModeStyle.color(bd.mode), modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        "${bd.mode.label} ${SimpleDateFormat("HH:mm", Locale.KOREA).format(Date(bd.time))} 탑승 · 내린 곳의 점을 눌러 '여기서 하차'",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Dot.Text,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = { vm.cancelBoarding() }) { Text("취소", color = Dot.Muted) }
+                }
             }
         }
         suggestion?.let { sg ->
@@ -414,31 +438,47 @@ fun MapScreen(
                 collapsed = cardCollapsed,
                 onCollapsedChange = { cardCollapsed = it },
                 selectedMode = selected?.let { modeOfPoint[it.id] },
-                onPickMode = { p -> modePick = p },
+                onPickMode = { p -> modePick = p to false },
+                boarding = boarding,
+                onBoard = { p -> modePick = p to true },
+                onAlight = { p -> vm.alightAt(p); selected = null },
                 alpha = panelAlpha,
             )
         }
-    }
 
-    if (showTimeline) {
-        TimelineSheet(
-            segments = segments,
-            onDismiss = { showTimeline = false },
-            onPick = { seg ->
-                showTimeline = false
-                selected = null
-                if (seg.stay) {
-                    selectedTrip = null
-                    selectedStay = seg
-                    controller.focusAt(seg.lat, seg.lng)
-                } else {
-                    selectedStay = null
-                    selectedTrip = seg
-                    fit(seg.points)
-                }
-            },
-            onEdit = { editing = it },
-        )
+        // 타임라인: 아래 카드가 화면 전체로 커지면서 열린다
+        androidx.compose.animation.AnimatedVisibility(
+            visible = showTimeline,
+            enter = androidx.compose.animation.expandVertically(
+                expandFrom = Alignment.Bottom,
+                animationSpec = androidx.compose.animation.core.tween(320),
+            ) + androidx.compose.animation.fadeIn(),
+            exit = androidx.compose.animation.shrinkVertically(
+                shrinkTowards = Alignment.Bottom,
+                animationSpec = androidx.compose.animation.core.tween(260),
+            ) + androidx.compose.animation.fadeOut(),
+            modifier = Modifier.align(Alignment.BottomCenter).fillMaxSize(),
+        ) {
+            TimelinePanel(
+                title = date.format(java.time.format.DateTimeFormatter.ofPattern("M월 d일 (E)", Locale.KOREA)),
+                segments = segments,
+                onClose = { showTimeline = false },
+                onPick = { seg ->
+                    showTimeline = false
+                    selected = null
+                    if (seg.stay) {
+                        selectedTrip = null
+                        selectedStay = seg
+                        controller.focusAt(seg.lat, seg.lng)
+                    } else {
+                        selectedStay = null
+                        selectedTrip = seg
+                        fit(seg.points)
+                    }
+                },
+                onEdit = { editing = it },
+            )
+        }
     }
 
     editing?.let { seg ->
@@ -461,15 +501,16 @@ fun MapScreen(
         }
     }
 
-    modePick?.let { p ->
+    modePick?.let { (p, board) ->
         val t = SimpleDateFormat("HH:mm", Locale.KOREA).format(Date(p.time))
         ModePickDialog(
-            title = "$t 이동 수단",
-            body = "이 점의 이동 수단을 골라요. 앞뒤 5분 안에 같은 수단 구간이 있으면 하나로 이어 붙여요.",
-            initial = modeOfPoint[p.id],
+            title = if (board) "$t 여기서 탑승" else "$t 이동 수단",
+            body = if (board) "탄 수단을 고르세요. 그다음 내린 곳의 점을 눌러 '여기서 하차'를 누르면 그 사이가 이 수단으로 바뀌고, 그 경로를 기억해 다음부터 알아봐요."
+            else "이 점의 이동 수단을 골라요. 앞뒤 5분 안에 같은 수단 구간이 있으면 하나로 이어 붙여요.",
+            initial = if (board) TransportMode.Car else modeOfPoint[p.id],
             onDismiss = { modePick = null },
         ) { m ->
-            vm.setPointMode(p, m)
+            if (board) vm.boardAt(p, m) else vm.setPointMode(p, m)
             modePick = null
             selected = null
         }
@@ -629,6 +670,9 @@ private fun StatusCard(
     onCollapsedChange: (Boolean) -> Unit = {},
     selectedMode: TransportMode? = null,
     onPickMode: (PointEntity) -> Unit = {},
+    boarding: MainViewModel.Boarding? = null,
+    onBoard: (PointEntity) -> Unit = {},
+    onAlight: (PointEntity) -> Unit = {},
     alpha: Float = 0.96f,
 ) {
     val timeFmt = remember { SimpleDateFormat("HH:mm", Locale.KOREA) }
@@ -749,25 +793,46 @@ private fun StatusCard(
                         Icon(Icons.Rounded.Close, contentDescription = "닫기", tint = Dot.Muted)
                     }
                 }
-                // 이 점의 이동 수단 고르기
                 Spacer(Modifier.height(10.dp))
-                Surface(
-                    onClick = { onPickMode(selected) },
-                    shape = RoundedCornerShape(50),
-                    color = Dot.Surface2,
-                    modifier = Modifier.fillMaxWidth().height(44.dp),
-                ) {
-                    Row(Modifier.padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-                        val c = selectedMode?.let { ModeStyle.color(it) } ?: Dot.Muted
-                        selectedMode?.let { Icon(ModeStyle.icon(it), null, tint = c, modifier = Modifier.size(18.dp)) }
+                if (boarding != null && boarding.time != selected.time) {
+                    // A에서 탔으면 B에서 내리기
+                    Button(
+                        onClick = { onAlight(selected) },
+                        modifier = Modifier.fillMaxWidth().height(48.dp),
+                        shape = RoundedCornerShape(50),
+                        colors = ButtonDefaults.buttonColors(containerColor = Dot.Lime, contentColor = Dot.OnLime),
+                    ) {
+                        Icon(ModeStyle.icon(boarding.mode), null, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(8.dp))
-                        Text(
-                            selectedMode?.let { "이동 수단: ${it.label}" } ?: "머무는 중",
-                            style = MaterialTheme.typography.labelLarge,
-                            color = Dot.Text,
-                            modifier = Modifier.weight(1f),
-                        )
-                        Text("바꾸기", style = MaterialTheme.typography.labelLarge, color = Dot.Lime)
+                        Text("여기서 하차 · ${boarding.mode.label}", style = MaterialTheme.typography.labelLarge, maxLines = 1)
+                    }
+                } else {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        // A: 여기서 탑승 (수단 고르기, 기본 자가용)
+                        Button(
+                            onClick = { onBoard(selected) },
+                            modifier = Modifier.weight(1f).height(44.dp),
+                            shape = RoundedCornerShape(50),
+                            colors = ButtonDefaults.buttonColors(containerColor = Dot.Lime, contentColor = Dot.OnLime),
+                        ) { Text("여기서 탑승", style = MaterialTheme.typography.labelLarge, maxLines = 1, softWrap = false) }
+                        // 이 점만 수단 바꾸기
+                        Surface(
+                            onClick = { onPickMode(selected) },
+                            shape = RoundedCornerShape(50),
+                            color = Dot.Surface2,
+                            modifier = Modifier.weight(1f).height(44.dp),
+                        ) {
+                            Row(Modifier.padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
+                                selectedMode?.let { Icon(ModeStyle.icon(it), null, tint = ModeStyle.color(it), modifier = Modifier.size(16.dp)) }
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    selectedMode?.let { "${it.label} · 바꾸기" } ?: "수단 바꾸기",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = Dot.Text,
+                                    maxLines = 1,
+                                )
+                            }
+                        }
                     }
                 }
             } else {

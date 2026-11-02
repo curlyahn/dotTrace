@@ -108,10 +108,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /** 같은 수단 지정과 겹치거나 맞닿으면 하나로 합치고, 다른 수단 지정과 겹친 부분은 잘라 낸다 */
-    private suspend fun insertSpanMerging(span: com.dot.trace.data.ModeSpanEntity) {
+    private suspend fun insertSpanMerging(span: com.dot.trace.data.ModeSpanEntity, mergeGapMs: Long = MERGE_GAP_MS) {
         var start = span.start
         var end = span.end
-        val touching = analysis.spansBetween(start - MERGE_GAP_MS, end + MERGE_GAP_MS)
+        val touching = analysis.spansBetween(start - mergeGapMs, end + mergeGapMs)
         for (o in touching.filter { it.mode == span.mode }) {
             start = minOf(start, o.start); end = maxOf(end, o.end)
             analysis.deleteSpan(o.id)
@@ -163,29 +163,55 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             analysis.deleteOverridesBetween(seg.start + 1, seg.end - 1)
             analysis.insertOverride(OverrideEntity(start = seg.start, end = seg.end, mode = mode.name))
         }
-        if (learn) {
-            // 경로 모양도 함께 기억 → 같은 길(버스·셔틀 노선 등)이면 타고 내린 곳이 달라도 알아본다
-            val rm = com.dot.trace.trips.RouteMatcher
-            val simple = rm.simplify(seg.points).takeIf { it.size >= 2 }
-            val path = simple?.let { rm.encode(it) }
-            // 같은 경로(또는 같은 출발·도착)를 예전에 다른 수단으로 기억했으면 새로 고친 것으로 바꾼다
-            for (old in analysis.rules()) {
-                val oldPath = rm.decode(old.path)
-                val samePath = simple != null && oldPath.size >= 2 &&
-                    rm.overlap(simple, oldPath) >= rm.MIN_OVERLAP && rm.overlap(oldPath, simple) >= rm.MIN_OVERLAP
-                val sameEnds = com.dot.trace.data.Geo.distance(seg.lat, seg.lng, old.startLat, old.startLng) <= DayAnalyzer.RULE_RADIUS_M &&
-                    com.dot.trace.data.Geo.distance(seg.endLat, seg.endLng, old.endLat, old.endLng) <= DayAnalyzer.RULE_RADIUS_M
-                if (samePath || sameEnds) analysis.deleteRule(old.id)
-            }
-            analysis.insertRule(
-                ModeRuleEntity(
-                    startLat = seg.lat, startLng = seg.lng, endLat = seg.endLat, endLng = seg.endLng,
-                    mode = mode.name, path = path,
-                )
-            )
-        }
+        if (learn && seg.points.size >= 2) learnRoute(seg.points, mode)
     }
 
+    /**
+     * 이 경로를 이 수단으로 기억한다 (경로 모양 + 출발·도착).
+     * 같은 길(버스 노선 등)이면 다음에 타고 내린 곳이 달라도 알아본다.
+     * 같은 경로를 예전에 다른 수단으로 기억했으면 새것으로 바꾼다.
+     */
+    private suspend fun learnRoute(points: List<PointEntity>, mode: TransportMode) {
+        if (points.size < 2) return
+        val rm = com.dot.trace.trips.RouteMatcher
+        val simple = rm.simplify(points).takeIf { it.size >= 2 } ?: return
+        val a = points.first(); val b = points.last()
+        for (old in analysis.rules()) {
+            val oldPath = rm.decode(old.path)
+            val samePath = oldPath.size >= 2 &&
+                rm.overlap(simple, oldPath) >= rm.MIN_OVERLAP && rm.overlap(oldPath, simple) >= rm.MIN_OVERLAP
+            val sameEnds = com.dot.trace.data.Geo.distance(a.lat, a.lng, old.startLat, old.startLng) <= DayAnalyzer.RULE_RADIUS_M &&
+                com.dot.trace.data.Geo.distance(b.lat, b.lng, old.endLat, old.endLng) <= DayAnalyzer.RULE_RADIUS_M
+            if (samePath || sameEnds) analysis.deleteRule(old.id)
+        }
+        analysis.insertRule(
+            ModeRuleEntity(startLat = a.lat, startLng = a.lng, endLat = b.lat, endLng = b.lng, mode = mode.name, path = rm.encode(simple))
+        )
+    }
+
+    // ── 지도에서 탑승(A) → 하차(B) ──
+
+    /** 'A에서 탑승'을 누른 상태: 그때 시각·수단·위치 */
+    data class Boarding(val time: Long, val mode: TransportMode, val lat: Double, val lng: Double)
+
+    private val _boarding = MutableStateFlow<Boarding?>(null)
+    val boarding: StateFlow<Boarding?> = _boarding
+
+    fun boardAt(p: PointEntity, mode: TransportMode) { _boarding.value = Boarding(p.time, mode, p.lat, p.lng) }
+
+    fun cancelBoarding() { _boarding.value = null }
+
+    /** B에서 하차: A~B를 탑승 때 고른 수단으로 바꾸고, 그 경로를 학습한다 */
+    fun alightAt(p: PointEntity) = viewModelScope.launch {
+        val b = _boarding.value ?: return@launch
+        _boarding.value = null
+        val from = minOf(b.time, p.time)
+        val to = maxOf(b.time, p.time)
+        if (to - from < 30_000L) return@launch
+        insertSpanMerging(com.dot.trace.data.ModeSpanEntity(start = from, end = to + 1, mode = b.mode.name), mergeGapMs = 60_000L)
+        // 탄 곳~내린 곳 경로를 기억 → 같은 노선이면 다음부터 자동으로 이 수단
+        learnRoute(day.value.points.filter { it.time in from..to }, b.mode)
+    }
 
     val rules: StateFlow<List<ModeRuleEntity>> = analysis.observeRules()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -354,6 +380,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private suspend fun lookupNames(segments: List<Segment>) {
         if (!com.dot.trace.places.GooglePlaces.available) return
+        lookupStations(segments)
         val todo = segments.filter { it.stay && !it.edited && it.placeKind == null && !it.nameFromGoogle }
         if (todo.isEmpty()) return
         val known = withContext(Dispatchers.IO) { analysis.poi() }.filter { it.source == PoiNameEntity.SOURCE_GOOGLE }.toMutableList()
@@ -381,6 +408,34 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             )
             analysis.putPoi(entity)
             known += entity
+        }
+    }
+
+    /**
+     * 지하철 판단을 위해 출발·도착 근처 지하철역 찾기.
+     * 지하철로 판단했거나, 신호가 오래 끊긴 차량 이동의 출발·도착점만 묻는다 (조회 수 절약).
+     */
+    private suspend fun lookupStations(segments: List<Segment>) {
+        val todo = segments.filter { s ->
+            !s.stay && s.spanId == null && !s.edited &&
+                (s.mode == TransportMode.Subway ||
+                    (s.mode in listOf(TransportMode.Car, TransportMode.Bus, TransportMode.Unknown) && DayAnalyzer.lostShare(s) >= 0.3))
+        }
+        if (todo.isEmpty()) return
+        val known = withContext(Dispatchers.IO) { analysis.poi() }.filter { it.source == PoiNameEntity.SOURCE_STATION }.toMutableList()
+        for ((lat, lng) in todo.flatMap { listOf(it.lat to it.lng, it.endLat to it.endLng) }) {
+            val key = "st:" + DayAnalyzer.poiKey(lat, lng)
+            if (!placeTried.add(key)) continue
+            if (known.any { com.dot.trace.data.Geo.distance(lat, lng, it.lat, it.lng) <= DayAnalyzer.STATION_QUERY_M }) continue
+            if (!app.prefs.takePlacesQuota(LocalDate.now(zone).toString(), PLACES_DAILY_LIMIT)) return
+            val found = com.dot.trace.places.GooglePlaces.nearestStation(app, lat, lng)
+            if (found == null && com.dot.trace.places.GooglePlaces.lastError != null) { placeTried.remove(key); return }
+            val e = PoiNameEntity(
+                key = key, lat = lat, lng = lng, name = found?.name ?: "",
+                source = PoiNameEntity.SOURCE_STATION, fetchedAt = System.currentTimeMillis(), placeId = found?.id,
+            )
+            analysis.putPoi(e)
+            known += e
         }
     }
 

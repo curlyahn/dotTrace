@@ -212,7 +212,6 @@ object TripClassifier {
 
         val movingWifi = hasMovingWifi(p)
         val transitWifi = p.count { it.transitWifi } >= 2
-        val stopsPerKm = countStops(p) / distKm.coerceAtLeast(0.3)
 
         // 이동 수단이 이미 정해져 들어온 기록(구글 타임라인 가져오기)은 그대로 따른다
         acts.filterKeys { ActivityCode.mode(it) != null }.maxByOrNull { it.value }?.let { (code, n) ->
@@ -228,8 +227,9 @@ object TripClassifier {
             bikeShare >= 0.5 -> TransportMode.Bicycle
             vehicleShare < 0.3 && avg in 8.0..28.0 && p85 < 35 -> TransportMode.Bicycle
             movingWifi || (transitWifi && max < 80) -> TransportMode.Bus
-            stopsPerKm >= 1.2 && avg <= 30 && max <= 70 -> TransportMode.Bus
-            vehicleShare >= 0.3 || avg >= 20 -> TransportMode.Car
+            // 버스는 '함께 이동하는 와이파이'나 학습한 버스 노선으로만 정한다.
+            // 정차가 잦은 것만으로는 시내 자가용과 구분이 안 돼서, 애매한 차량 이동은 자가용으로 본다.
+            vehicleShare >= 0.3 || avg >= 8 -> TransportMode.Car
             else -> TransportMode.Unknown
         }
     }
