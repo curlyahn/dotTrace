@@ -505,12 +505,16 @@ fun MapScreen(
         val t = SimpleDateFormat("HH:mm", Locale.KOREA).format(Date(p.time))
         ModePickDialog(
             title = if (board) "$t 여기서 탑승" else "$t 이동 수단",
-            body = if (board) "탄 수단을 고르세요. 그다음 내린 곳의 점을 눌러 '여기서 하차'를 누르면 그 사이가 이 수단으로 바뀌고, 그 경로를 기억해 다음부터 알아봐요."
+            body = if (board) "탄 수단을 고르고 '여기서 탑승'을 누르세요. 그다음 내린 곳의 점을 누르면 '여기서 하차'가 나와요. 그 사이가 이 수단으로 바뀌고, 경로를 기억해 다음부터 알아봐요."
             else "이 점의 이동 수단을 골라요. 앞뒤 5분 안에 같은 수단 구간이 있으면 하나로 이어 붙여요.",
             initial = if (board) TransportMode.Car else modeOfPoint[p.id],
             onDismiss = { modePick = null },
+            confirmLabel = if (board) "여기서 탑승" else "바꾸기",
         ) { m ->
-            if (board) vm.boardAt(p, m) else vm.setPointMode(p, m)
+            if (board) {
+                vm.boardAt(p, m)
+                android.widget.Toast.makeText(context, "${m.label} 탑승을 기록했어요. 내린 곳의 점을 눌러 '여기서 하차'를 누르세요", android.widget.Toast.LENGTH_LONG).show()
+            } else vm.setPointMode(p, m)
             modePick = null
             selected = null
         }

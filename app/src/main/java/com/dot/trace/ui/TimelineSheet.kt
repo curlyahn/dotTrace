@@ -324,8 +324,11 @@ fun ModePickDialog(
     body: String,
     initial: TransportMode?,
     onDismiss: () -> Unit,
+    confirmLabel: String = "확인",
     onPick: (TransportMode) -> Unit,
 ) {
+    // 칩을 누르면 고르고, 확인을 눌러야 저장 (미리 골라 둔 수단도 확인만 누르면 됨)
+    var picked by remember { mutableStateOf(initial) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
@@ -335,11 +338,11 @@ fun ModePickDialog(
                 Spacer(Modifier.height(12.dp))
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     TransportMode.entries.filter { it != TransportMode.Unknown }.forEach { m ->
-                        val on = m == initial
+                        val on = m == picked
                         val c = ModeStyle.color(m)
                         Row(
                             Modifier.clip(RoundedCornerShape(50)).background(if (on) c else Dot.Surface2)
-                                .clickable { onPick(m) }.padding(horizontal = 14.dp, vertical = 10.dp),
+                                .clickable { picked = m }.padding(horizontal = 14.dp, vertical = 10.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Icon(ModeStyle.icon(m), null, tint = if (on) Dot.Ink else c, modifier = Modifier.size(18.dp))
@@ -350,7 +353,11 @@ fun ModePickDialog(
                 }
             }
         },
-        confirmButton = {},
+        confirmButton = {
+            TextButton(onClick = { picked?.let(onPick) }, enabled = picked != null) {
+                Text(confirmLabel, color = if (picked != null) Dot.Lime else Dot.Faint)
+            }
+        },
         dismissButton = { TextButton(onClick = onDismiss) { Text("취소") } },
         containerColor = Dot.Surface,
     )
