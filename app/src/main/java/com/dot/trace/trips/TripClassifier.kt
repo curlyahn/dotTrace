@@ -220,9 +220,11 @@ object TripClassifier {
 
         return when {
             avg >= 250 -> TransportMode.Flight
-            avg >= 110 || max >= 170 -> TransportMode.Train
-            gapFrac >= 0.35 && avg in 15.0..90.0 -> TransportMode.Subway
+            // 위치가 오래 끊긴 채 이동했으면 지하철 (지하 구간). 기차보다 먼저 본다.
+            gapFrac >= 0.35 && avg in 15.0..110.0 -> TransportMode.Subway
             movingWifi && gapFrac >= 0.15 -> TransportMode.Subway
+            // 기차: 꾸준히 빨라야 한다. 한 구간만 튄 최고 속도(잘못 잡힌 위치)로는 기차로 보지 않는다
+            avg >= 110 || (p85 >= 130 && gapFrac < 0.35) -> TransportMode.Train
             walkShare >= 0.6 || avg < 6 -> TransportMode.Walk
             bikeShare >= 0.5 -> TransportMode.Bicycle
             vehicleShare < 0.3 && avg in 8.0..28.0 && p85 < 35 -> TransportMode.Bicycle

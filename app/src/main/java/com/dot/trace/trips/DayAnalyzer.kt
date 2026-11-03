@@ -241,7 +241,7 @@ class DayStore(private val db: AppDatabase) {
 
     // v2: 이동 구간에는 줄인 경로도 저장 (경로 학습을 리포트에도 적용하려고)
     private fun encode(segs: List<Segment>): String = buildString {
-        append("v4\n")
+        append("v5\n")
         for (s in segs) {
             append(if (s.stay) 's' else 'm').append('|')
             append(s.start).append('|').append(s.end).append('|').append(s.mode.name).append('|')
@@ -254,7 +254,7 @@ class DayStore(private val db: AppDatabase) {
 
     private fun decode(data: String): List<Segment>? = runCatching {
         val lines = data.lines()
-        if (lines.firstOrNull() != "v4") return null
+        if (lines.firstOrNull() != "v5") return null
         lines.drop(1).filter { it.isNotBlank() }.map { l ->
             val f = l.split('|')
             val path = RouteMatcher.decode(f.getOrNull(9)?.takeIf { it.isNotEmpty() })
