@@ -428,6 +428,7 @@ fun MapScreen(
                     selectedTrip = if (selectedTrip == t) null else t
                     fit(if (selectedTrip == null) points else t.points)
                 },
+                onEditTrip = { editing = it },
                 onShowPoints = { if (points.isNotEmpty()) showPoints = true },
                 onShowTimeline = { showTimeline = true },
                 selectedStay = selectedStay,
@@ -663,6 +664,7 @@ private fun StatusCard(
     trips: List<Segment>,
     selectedTrip: Segment?,
     onSelectTrip: (Segment) -> Unit,
+    onEditTrip: (Segment) -> Unit = {},
     onShowPoints: () -> Unit,
     onShowTimeline: () -> Unit,
     selectedStay: Segment?,
@@ -862,6 +864,32 @@ private fun StatusCard(
             if (trips.isNotEmpty() && selected == null && selectedStay == null) {
                 Spacer(Modifier.height(14.dp))
                 TripStrip(trips, selectedTrip, onSelectTrip)
+                // 고른 이동: 바로 수단 바꾸기
+                selectedTrip?.let { t ->
+                    Spacer(Modifier.height(10.dp))
+                    Surface(
+                        onClick = { onEditTrip(t) },
+                        shape = RoundedCornerShape(50),
+                        color = Dot.Surface2,
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Dot.Lime.copy(alpha = 0.5f)),
+                        modifier = Modifier.fillMaxWidth().height(44.dp),
+                    ) {
+                        Row(Modifier.padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(ModeStyle.icon(t.mode), null, tint = ModeStyle.color(t.mode), modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                "${t.mode.label} · ${"%.1f".format(Locale.US, t.distanceM / 1000)}km · " +
+                                    "${timeFmt.format(Date(t.start))}–${timeFmt.format(Date(t.end))}",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = Dot.Text,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f),
+                            )
+                            Text("수단 바꾸기", style = MaterialTheme.typography.labelLarge, color = Dot.Lime)
+                        }
+                    }
+                }
             }
             Spacer(Modifier.height(16.dp))
 

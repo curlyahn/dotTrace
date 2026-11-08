@@ -228,9 +228,9 @@ object TripClassifier {
             walkShare >= 0.6 || avg < 6 -> TransportMode.Walk
             bikeShare >= 0.5 -> TransportMode.Bicycle
             vehicleShare < 0.3 && avg in 8.0..28.0 && p85 < 35 -> TransportMode.Bicycle
-            movingWifi || (transitWifi && max < 80) -> TransportMode.Bus
-            // 버스는 '함께 이동하는 와이파이'나 학습한 버스 노선으로만 정한다.
-            // 정차가 잦은 것만으로는 시내 자가용과 구분이 안 돼서, 애매한 차량 이동은 자가용으로 본다.
+            // 버스는 자동으로 정하지 않는다: 차량 이동은 모두 자가용이 기본.
+            // (함께 이동하는 와이파이는 차 안 핫스팟·동승자 기기에서도 보여 버스 판단에 믿을 수 없다)
+            // 버스는 직접 고치거나, 고쳐서 기억한 같은 노선·같은 정류장 이동일 때만 버스로 표시한다.
             vehicleShare >= 0.3 || avg >= 8 -> TransportMode.Car
             else -> TransportMode.Unknown
         }

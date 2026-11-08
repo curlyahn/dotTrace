@@ -189,13 +189,25 @@ object DayAnalyzer {
             .mapNotNull { (rule, learned) ->
                 val m = modeOf(rule.mode) ?: return@mapNotNull null
                 if (!RouteMatcher.speedFits(m, kmh)) return@mapNotNull null
-                // 내 차 블루투스로 자동차라고 확실한 이동은 버스 노선과 겹쳐도 버스로 바꾸지 않는다
-                if (m == TransportMode.Bus && carShare >= 0.5) return@mapNotNull null
+                // 버스는 같은 길을 자가용으로도 다니므로 더 엄격하게:
+                // 내 차 블루투스로 자동차라고 확실하면 제외, 그리고 기억한 노선과 같은 정류장(500m 안)에서 타고 내렸을 때만
+                if (m == TransportMode.Bus) {
+                    if (carShare >= 0.5) return@mapNotNull null
+                    if (!sameStops(seg, rule)) return@mapNotNull null
+                }
                 m to RouteMatcher.overlap(path, learned)
             }
             .filter { it.second >= RouteMatcher.MIN_OVERLAP }
             .maxByOrNull { it.second }
             ?.first
+    }
+
+    /** 기억한 이동과 같은 곳에서 타고 내렸는지 (반대 방향 포함, 500m 안) */
+    private fun sameStops(seg: Segment, r: ModeRuleEntity): Boolean {
+        fun near(a: Double, b: Double, c: Double, d: Double) = Geo.distance(a, b, c, d) <= 500f
+        val forward = near(seg.lat, seg.lng, r.startLat, r.startLng) && near(seg.endLat, seg.endLng, r.endLat, r.endLng)
+        val back = near(seg.lat, seg.lng, r.endLat, r.endLng) && near(seg.endLat, seg.endLng, r.startLat, r.startLng)
+        return forward || back
     }
 
     private fun overlap(s: Segment, o: OverrideEntity): Long =
@@ -241,7 +253,7 @@ class DayStore(private val db: AppDatabase) {
 
     // v2: 이동 구간에는 줄인 경로도 저장 (경로 학습을 리포트에도 적용하려고)
     private fun encode(segs: List<Segment>): String = buildString {
-        append("v5\n")
+        append("v6\n")
         for (s in segs) {
             append(if (s.stay) 's' else 'm').append('|')
             append(s.start).append('|').append(s.end).append('|').append(s.mode.name).append('|')
@@ -254,7 +266,7 @@ class DayStore(private val db: AppDatabase) {
 
     private fun decode(data: String): List<Segment>? = runCatching {
         val lines = data.lines()
-        if (lines.firstOrNull() != "v5") return null
+        if (lines.firstOrNull() != "v6") return null
         lines.drop(1).filter { it.isNotBlank() }.map { l ->
             val f = l.split('|')
             val path = RouteMatcher.decode(f.getOrNull(9)?.takeIf { it.isNotEmpty() })
