@@ -103,11 +103,12 @@ object ReportBuilder {
             while (d.isBefore(period.endExclusive) && !d.isAfter(today)) {
                 val from = d.atStartOfDay(zone).toInstant().toEpochMilli()
                 val to = d.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
-                val raw = store.segments(d)
+                // 지난 날짜는 고정본(그때 기준의 판단)을 쓴다
+                val raw = store.autoSegments(d)
                 if (raw.isNotEmpty()) {
                     days++
                     points += db.points().countBetween(from, to)
-                    for (seg in DayAnalyzer.apply(raw, corrections)) {
+                    for (seg in DayAnalyzer.applyUser(raw, corrections)) {
                         val dur = seg.end - seg.start
                         if (seg.stay) {
                             val lat = seg.lat

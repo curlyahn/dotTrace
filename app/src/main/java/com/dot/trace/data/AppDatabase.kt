@@ -248,6 +248,20 @@ data class PoiNameEntity(
     }
 }
 
+/**
+ * 지난 날짜의 판단 결과 고정본 (구간·이동 수단).
+ * 하루가 지나 처음 분석할 때 그때의 기준으로 한 번 만들고, 이후 판단 기준이 바뀌어도 다시 만들지 않는다.
+ * 그날 기록 자체가 바뀌었을 때(가져오기 등)만 다시 만든다. 사용자 수정은 이 위에 덧씌운다.
+ * ⚠️ 마이그레이션에서 이 표를 지우면 안 된다 (지난 기록이 새 기준으로 바뀌어 버림).
+ */
+@Entity(tableName = "frozen_days")
+data class FrozenDayEntity(
+    @PrimaryKey val day: String,
+    val pointCount: Int,
+    val frozenAt: Long,
+    val data: String,
+)
+
 /** 하루 분석 결과 저장 (기록이 바뀌지 않았으면 다시 분석하지 않음 → 리포트가 빨라짐) */
 @Entity(tableName = "day_cache")
 data class DayCacheEntity(
@@ -345,6 +359,12 @@ interface AnalysisDao {
     @Query("DELETE FROM floor_calibs WHERE parkingId = :parkingId")
     suspend fun deleteFloorCalibFor(parkingId: Long)
 
+    @Query("SELECT * FROM frozen_days WHERE day = :day")
+    suspend fun frozen(day: String): FrozenDayEntity?
+
+    @Insert(onConflict = androidx.room.OnConflictStrategy.REPLACE)
+    suspend fun putFrozen(f: FrozenDayEntity)
+
     @Query("SELECT * FROM day_cache WHERE day = :day")
     suspend fun cached(day: String): DayCacheEntity?
 
@@ -356,8 +376,8 @@ interface AnalysisDao {
 }
 
 @Database(
-    entities = [PointEntity::class, PlaceEntity::class, OverrideEntity::class, ModeRuleEntity::class, PoiNameEntity::class, DayCacheEntity::class, ModeSpanEntity::class, ParkingEntity::class, FloorCalibEntity::class],
-    version = 9,
+    entities = [PointEntity::class, PlaceEntity::class, OverrideEntity::class, ModeRuleEntity::class, PoiNameEntity::class, DayCacheEntity::class, ModeSpanEntity::class, ParkingEntity::class, FloorCalibEntity::class, FrozenDayEntity::class],
+    version = 10,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -370,7 +390,7 @@ abstract class AppDatabase : RoomDatabase() {
 
         fun get(context: Context): AppDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(context.applicationContext, AppDatabase::class.java, "dottrace.db")
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10)
                 .build()
                 .also { instance = it }
         }
@@ -469,6 +489,16 @@ abstract class AppDatabase : RoomDatabase() {
                     "CREATE TABLE IF NOT EXISTS floor_calibs (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
                         "lat REAL NOT NULL, lng REAL NOT NULL, floor INTEGER NOT NULL, deltaHpa REAL, wifi TEXT, " +
                         "parkingId INTEGER, createdAt INTEGER NOT NULL)"
+                )
+            }
+        }
+
+        /** 지난 날짜 판단 고정 */
+        private val MIGRATION_9_10 = object : Migration(9, 10) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS frozen_days (day TEXT PRIMARY KEY NOT NULL, " +
+                        "pointCount INTEGER NOT NULL, frozenAt INTEGER NOT NULL, data TEXT NOT NULL)"
                 )
             }
         }

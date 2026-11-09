@@ -2,6 +2,7 @@ package com.dot.trace.trips
 
 import com.dot.trace.data.AppDatabase
 import com.dot.trace.data.DayCacheEntity
+import com.dot.trace.data.FrozenDayEntity
 import com.dot.trace.data.Geo
 import com.dot.trace.data.ModeRuleEntity
 import com.dot.trace.data.ModeSpanEntity
@@ -41,7 +42,31 @@ object DayAnalyzer {
      * 2) 이동은 같은 출발·도착 규칙이 있으면 그 수단
      * 3) 머문 곳 이름: 직접 고친 이름 > 내 장소(집·회사·자주 가는 곳·기억한 이름) > 지도 상호
      */
-    fun apply(segments: List<Segment>, c: Corrections): List<Segment> = applySpans(segments, c.spans).map { seg ->
+    fun apply(segments: List<Segment>, c: Corrections): List<Segment> = applyUser(autoModes(segments, c), c)
+
+    /**
+     * 자동 보정 (판단 기준): 학습한 경로·출발도착 규칙·지하철역 확인.
+     * 지난 날짜는 이 결과까지 고정(FrozenDay)되어, 이후 규칙이 바뀌어도 다시 적용하지 않는다.
+     */
+    fun autoModes(segments: List<Segment>, c: Corrections): List<Segment> = segments.map { seg ->
+        if (seg.stay) return@map seg
+        // 1) 학습한 경로와 대부분 겹치면 그 수단 (가장 많이 겹치는 경로)
+        val routed = routeMode(seg, c)
+        // 2) 같은 출발지·도착지 규칙
+        val ruled = if (routed == null) c.rules.firstOrNull {
+            Geo.distance(seg.lat, seg.lng, it.startLat, it.startLng) <= RULE_RADIUS_M &&
+                Geo.distance(seg.endLat, seg.endLng, it.endLat, it.endLng) <= RULE_RADIUS_M
+        }?.let { modeOf(it.mode) } else null
+        // 3) 지하철 판단은 출발·도착 근처에 역이 있는지로 확인
+        val stationed = if (routed == null && ruled == null) stationMode(seg, c) else null
+        seg.copy(mode = routed ?: ruled ?: stationed ?: seg.mode, learned = (routed ?: ruled) != null)
+    }
+
+    /**
+     * 사용자가 직접 한 것만 덧씌운다: 탑승~하차·점 지정, 구간 수단 고치기, 머문 곳 이름.
+     * (지난 날짜에도 언제나 적용 — 사용자가 고친 것이므로)
+     */
+    fun applyUser(segments: List<Segment>, c: Corrections): List<Segment> = applySpans(segments, c.spans).map { seg ->
         // 탑승~하차로 정한 구간은 그대로
         if (seg.spanId != null) return@map seg
         val ov = c.overrides.filter { overlaps(seg, it) }.maxByOrNull { overlap(seg, it) }
@@ -61,20 +86,7 @@ object DayAnalyzer {
             )
         } else {
             val overridden = ov?.mode?.let { modeOf(it) }
-            // 1) 학습한 경로와 대부분 겹치면 그 수단 (가장 많이 겹치는 경로)
-            val routed = if (overridden == null) routeMode(seg, c) else null
-            // 2) 같은 출발지·도착지 규칙
-            val ruled = if (overridden == null && routed == null) c.rules.firstOrNull {
-                Geo.distance(seg.lat, seg.lng, it.startLat, it.startLng) <= RULE_RADIUS_M &&
-                    Geo.distance(seg.endLat, seg.endLng, it.endLat, it.endLng) <= RULE_RADIUS_M
-            }?.let { modeOf(it.mode) } else null
-            // 3) 지하철 판단은 출발·도착 근처에 역이 있는지로 확인
-            val stationed = if (overridden == null && routed == null && ruled == null) stationMode(seg, c) else null
-            seg.copy(
-                mode = overridden ?: routed ?: ruled ?: stationed ?: seg.mode,
-                edited = overridden != null,
-                learned = overridden == null && (routed ?: ruled) != null,
-            )
+            if (overridden != null) seg.copy(mode = overridden, edited = true, learned = false) else seg
         }
     }
 
@@ -230,6 +242,40 @@ object DayAnalyzer {
 class DayStore(private val db: AppDatabase) {
     private val zone: ZoneId = ZoneId.systemDefault()
 
+    /**
+     * 그날의 자동 판단 결과 (구간 + 이동 수단, 사용자 수정 전).
+     *
+     * ⚠️ 원칙: 지난 기록은 판단 기준이 바뀌어도 바뀌지 않는다.
+     * - 오늘(과 미래): 지금 기준으로 판단
+     * - 지난 날짜: 처음 분석할 때 그때 기준으로 고정본(frozen_days)을 만들고, 이후에는 고정본만 쓴다.
+     *   그날 기록 개수가 바뀐 경우(가져오기 등)에만 다시 만든다.
+     * [points]를 주면 고정본 구간에 실제 기록 점을 붙여 돌려준다 (지도 그리기용).
+     */
+    suspend fun autoSegments(day: LocalDate, points: List<PointEntity>? = null): List<Segment> {
+        val from = day.atStartOfDay(zone).toInstant().toEpochMilli()
+        val to = day.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
+        val today = LocalDate.now(zone)
+        if (!day.isBefore(today)) return DayAnalyzer.autoModes(points?.let { TripClassifier.classify(it) } ?: segments(day), corrections(from, to))
+
+        val count = db.points().countBetween(from, to)
+        if (count == 0) return emptyList()
+        val key = day.toString()
+        val frozen = db.analysis().frozen(key)?.takeIf { it.pointCount == count }?.let { decode(it.data, FROZEN_TAGS) }
+        val segs = frozen ?: run {
+            val raw = points?.let { TripClassifier.classify(it) } ?: segments(day)
+            DayAnalyzer.autoModes(raw, corrections(from, to)).also {
+                db.analysis().putFrozen(FrozenDayEntity(key, count, System.currentTimeMillis(), encode(it, FROZEN_TAG)))
+            }
+        }
+        if (points == null || frozen == null) return segs
+        // 고정본 구간에 실제 기록 점을 붙인다
+        return segs.map { s ->
+            val pts = points.filter { it.time >= s.start && it.time <= s.end }
+            if (pts.isEmpty()) s else s.copy(points = pts)
+        }
+    }
+
+    /** 자동 판단 전 구간 나누기 (기록이 바뀌지 않았으면 저장해 둔 것을 다시 쓴다) */
     suspend fun segments(day: LocalDate): List<Segment> {
         val from = day.atStartOfDay(zone).toInstant().toEpochMilli()
         val to = day.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
@@ -252,21 +298,22 @@ class DayStore(private val db: AppDatabase) {
     }
 
     // v2: 이동 구간에는 줄인 경로도 저장 (경로 학습을 리포트에도 적용하려고)
-    private fun encode(segs: List<Segment>): String = buildString {
-        append("v6\n")
+    private fun encode(segs: List<Segment>, tag: String = CACHE_TAG): String = buildString {
+        append(tag).append('\n')
         for (s in segs) {
             append(if (s.stay) 's' else 'm').append('|')
             append(s.start).append('|').append(s.end).append('|').append(s.mode.name).append('|')
             append(s.distanceM).append('|').append(s.lat).append('|').append(s.lng).append('|')
             append(s.endLat).append('|').append(s.endLng).append('|')
             if (!s.stay) append(RouteMatcher.encode(RouteMatcher.simplify(s.points)))
+            append('|').append(if (s.learned) '1' else '0')
             append('\n')
         }
     }
 
-    private fun decode(data: String): List<Segment>? = runCatching {
+    private fun decode(data: String, tags: Set<String> = setOf(CACHE_TAG)): List<Segment>? = runCatching {
         val lines = data.lines()
-        if (lines.firstOrNull() != "v6") return null
+        if (lines.firstOrNull() !in tags) return null
         lines.drop(1).filter { it.isNotBlank() }.map { l ->
             val f = l.split('|')
             val path = RouteMatcher.decode(f.getOrNull(9)?.takeIf { it.isNotEmpty() })
@@ -281,7 +328,19 @@ class DayStore(private val db: AppDatabase) {
                 lng = f[6].toDouble(),
                 endLat = f[7].toDouble(),
                 endLng = f[8].toDouble(),
+                learned = f.getOrNull(10) == "1",
             )
         }
     }.getOrNull()
+
+    companion object {
+        /** 분석 저장(캐시) 형식: 판단 기준이 바뀌면 올려서 다시 분석 (오늘 기록에만 영향) */
+        const val CACHE_TAG = "v6"
+        /**
+         * 고정본 형식. ⚠️ 지난 기록 고정본은 절대 버리지 않는다:
+         * 형식을 바꾸더라도 예전 태그도 계속 읽을 수 있게 FROZEN_TAGS에 남겨 둘 것.
+         */
+        const val FROZEN_TAG = "f1"
+        val FROZEN_TAGS = setOf("f1")
+    }
 }

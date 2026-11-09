@@ -43,7 +43,8 @@ import java.time.ZoneId
 
 data class DayPoints(val date: LocalDate?, val points: List<PointEntity>)
 
-data class DayTrips(val date: LocalDate?, val segments: List<Segment>)
+/** frozen: 지난 날짜의 고정본(자동 판단 기준이 바뀌어도 그대로) — 사용자 수정만 덧씌운다 */
+data class DayTrips(val date: LocalDate?, val segments: List<Segment>, val frozen: Boolean = false)
 
 /** 구글 타임라인 가져오기 진행 상황 */
 data class ImportUi(
@@ -78,7 +79,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     /** 선택한 날짜를 머무름·이동 구간으로 나누고 이동 수단을 추정한 결과 (수정 전) */
     private val rawTrips: kotlinx.coroutines.flow.Flow<DayTrips> = day
-        .map { d -> DayTrips(d.date, TripClassifier.classify(d.points)) }
+        .map { d ->
+            val dt = d.date
+            // 지난 날짜는 처음 볼 때 고정한 판단을 그대로 쓴다 (기준이 바뀌어도 지난 기록은 안 바뀜)
+            if (dt != null && dt.isBefore(LocalDate.now(zone)) && d.points.isNotEmpty())
+                DayTrips(dt, DayStore(app.db).autoSegments(dt, d.points), frozen = true)
+            else DayTrips(dt, TripClassifier.classify(d.points))
+        }
         .flowOn(Dispatchers.Default)
 
     /** 사용자 수정·학습 규칙·장소 이름 */
@@ -136,7 +143,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     /** 화면에 보여 줄 하루 정리: 분석 결과 + 사용자 수정 + 이름 */
     val trips: StateFlow<DayTrips> = kotlinx.coroutines.flow.combine(rawTrips, corrections) { t, c ->
-        DayTrips(t.date, DayAnalyzer.apply(t.segments, c))
+        DayTrips(t.date, if (t.frozen) DayAnalyzer.applyUser(t.segments, c) else DayAnalyzer.apply(t.segments, c), t.frozen)
     }
         .flowOn(Dispatchers.Default)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), DayTrips(null, emptyList()))
