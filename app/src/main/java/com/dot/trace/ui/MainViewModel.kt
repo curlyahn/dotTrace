@@ -245,6 +245,36 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /** 내 장소 (집·회사·자주 가는 곳) */
+    // ── 내 차 주차 ──
+
+    val parkings: StateFlow<List<com.dot.trace.data.ParkingEntity>> = analysis.observeParkings()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    private val _selectedParkingId = MutableStateFlow<Long?>(null)
+    val selectedParkingId: StateFlow<Long?> = _selectedParkingId
+
+    fun selectParking(id: Long?) { _selectedParkingId.value = id }
+
+    /** 추정한 층이 맞다: 확인으로 저장하고 이 건물 값으로 학습 */
+    fun confirmFloor(p: com.dot.trace.data.ParkingEntity) = viewModelScope.launch {
+        p.floorEst?.let { com.dot.trace.parking.ParkingRepo.setFloor(app.db, p.id, it) }
+        com.dot.trace.parking.ParkingRepo.cancelNotification(app)
+    }
+
+    /** 층·구역 고치기 (층은 학습에 쓰인다) */
+    fun saveFloorZone(p: com.dot.trace.data.ParkingEntity, floor: Int?, zone: String) = viewModelScope.launch {
+        if (floor != null && floor != p.floor) com.dot.trace.parking.ParkingRepo.setFloor(app.db, p.id, floor)
+        analysis.parking(p.id)?.let { analysis.updateParking(it.copy(zone = zone.ifBlank { null })) }
+        com.dot.trace.parking.ParkingRepo.cancelNotification(app)
+    }
+
+    fun setParkingPhoto(id: Long, name: String) = viewModelScope.launch {
+        analysis.parking(id)?.let { old ->
+            old.photo?.takeIf { it != name }?.let { java.io.File(parkingPhotoDir(app), it).delete() }
+            analysis.updateParking(old.copy(photo = name))
+        }
+    }
+
     val places: StateFlow<List<PlaceEntity>> = app.db.places().observeAll()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 

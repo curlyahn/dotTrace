@@ -132,6 +132,62 @@ interface PlaceDao {
     suspend fun delete(id: Long)
 }
 
+/**
+ * 내 차 주차 기록: 내 차 블루투스가 끊긴 때(하차) ~ 다시 연결된 때(승차).
+ * 위치는 주차장에 들어가기 전 마지막으로 정확히 잡힌 GPS(입구), 층은 그때와 하차 때의 기압 차와 와이파이로 추정.
+ */
+@Entity(tableName = "parkings", indices = [Index("parkedAt")])
+data class ParkingEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    /** 하차(블루투스 끊김) 시각 */
+    val parkedAt: Long,
+    /** 다시 탄(블루투스 연결) 시각, 아직 주차 중이면 null */
+    val leftAt: Long? = null,
+    /** 주차 위치 (입구 GPS, 지상 주차면 하차 직후 GPS) */
+    val lat: Double,
+    val lng: Double,
+    val accuracy: Float? = null,
+    /** 입구(마지막 정확한 GPS) 시각 */
+    val entryAt: Long? = null,
+    /** 입구 기압, 하차 때 기압 (hPa). 기압 센서가 없으면 null */
+    val entryHpa: Float? = null,
+    val parkHpa: Float? = null,
+    /** 하차 때 보인 와이파이 (신호 센 순, 쉼표로) */
+    val wifi: String? = null,
+    /** 추정한 층 (0 = 지상, -1 = B1, 2 = 2층 …) */
+    val floorEst: Int? = null,
+    /** 추정 근거: "wifi", "learned", "pressure", "gps" */
+    val floorSource: String? = null,
+    /** 사용자가 확인·고친 층 (확인 전 null) */
+    val floor: Int? = null,
+    /** 구역 메모 (예: C-14) */
+    val zone: String? = null,
+    /** 사진 파일 이름 (앱 안 files/parking/) */
+    val photo: String? = null,
+) {
+    /** 화면에 보일 층: 확인한 층, 없으면 추정 */
+    val shownFloor: Int? get() = floor ?: floorEst
+    val confirmed: Boolean get() = floor != null
+    /** 기압 차 (하차 - 입구). 내려갈수록 커진다 */
+    val deltaHpa: Float? get() = if (entryHpa != null && parkHpa != null) parkHpa - entryHpa else null
+}
+
+/**
+ * 건물별 층 학습: 사용자가 확인·고친 주차 한 번 = 한 줄.
+ * 다음에 같은 건물(입구 150m 안)에 주차하면 이 값들로 층을 보정한다.
+ */
+@Entity(tableName = "floor_calibs")
+data class FloorCalibEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val lat: Double,
+    val lng: Double,
+    val floor: Int,
+    val deltaHpa: Float? = null,
+    val wifi: String? = null,
+    val parkingId: Long? = null,
+    val createdAt: Long = System.currentTimeMillis(),
+)
+
 /** 지도에서 정한 탑승~하차 구간: 이 시간 사이는 이 수단으로 이동 (자동 판단보다 우선, 구간을 나눔) */
 @Entity(tableName = "mode_spans", indices = [Index("start")])
 data class ModeSpanEntity(
@@ -258,6 +314,37 @@ interface AnalysisDao {
     @Query("DELETE FROM mode_spans WHERE id = :id")
     suspend fun deleteSpan(id: Long)
 
+    // ── 내 차 주차 ──
+    @Query("SELECT * FROM parkings ORDER BY parkedAt DESC")
+    fun observeParkings(): Flow<List<ParkingEntity>>
+
+    @Query("SELECT * FROM parkings WHERE parkedAt < :to AND (leftAt IS NULL OR leftAt > :from) ORDER BY parkedAt")
+    suspend fun parkingsBetween(from: Long, to: Long): List<ParkingEntity>
+
+    @Query("SELECT * FROM parkings WHERE leftAt IS NULL ORDER BY parkedAt DESC LIMIT 1")
+    suspend fun openParking(): ParkingEntity?
+
+    @Query("SELECT * FROM parkings WHERE id = :id")
+    suspend fun parking(id: Long): ParkingEntity?
+
+    @Insert
+    suspend fun insertParking(p: ParkingEntity): Long
+
+    @androidx.room.Update
+    suspend fun updateParking(p: ParkingEntity)
+
+    @Query("DELETE FROM parkings WHERE id = :id")
+    suspend fun deleteParking(id: Long)
+
+    @Query("SELECT * FROM floor_calibs")
+    suspend fun floorCalibs(): List<FloorCalibEntity>
+
+    @Insert
+    suspend fun insertFloorCalib(c: FloorCalibEntity): Long
+
+    @Query("DELETE FROM floor_calibs WHERE parkingId = :parkingId")
+    suspend fun deleteFloorCalibFor(parkingId: Long)
+
     @Query("SELECT * FROM day_cache WHERE day = :day")
     suspend fun cached(day: String): DayCacheEntity?
 
@@ -269,8 +356,8 @@ interface AnalysisDao {
 }
 
 @Database(
-    entities = [PointEntity::class, PlaceEntity::class, OverrideEntity::class, ModeRuleEntity::class, PoiNameEntity::class, DayCacheEntity::class, ModeSpanEntity::class],
-    version = 8,
+    entities = [PointEntity::class, PlaceEntity::class, OverrideEntity::class, ModeRuleEntity::class, PoiNameEntity::class, DayCacheEntity::class, ModeSpanEntity::class, ParkingEntity::class, FloorCalibEntity::class],
+    version = 9,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -283,7 +370,7 @@ abstract class AppDatabase : RoomDatabase() {
 
         fun get(context: Context): AppDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(context.applicationContext, AppDatabase::class.java, "dottrace.db")
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9)
                 .build()
                 .also { instance = it }
         }
@@ -365,6 +452,24 @@ abstract class AppDatabase : RoomDatabase() {
                         "start INTEGER NOT NULL, `end` INTEGER NOT NULL, mode TEXT NOT NULL)"
                 )
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_mode_spans_start ON mode_spans (start)")
+            }
+        }
+
+        /** 내 차 주차 기록과 건물별 층 학습 */
+        private val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS parkings (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "parkedAt INTEGER NOT NULL, leftAt INTEGER, lat REAL NOT NULL, lng REAL NOT NULL, accuracy REAL, " +
+                        "entryAt INTEGER, entryHpa REAL, parkHpa REAL, wifi TEXT, floorEst INTEGER, floorSource TEXT, " +
+                        "floor INTEGER, zone TEXT, photo TEXT)"
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_parkings_parkedAt ON parkings (parkedAt)")
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS floor_calibs (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "lat REAL NOT NULL, lng REAL NOT NULL, floor INTEGER NOT NULL, deltaHpa REAL, wifi TEXT, " +
+                        "parkingId INTEGER, createdAt INTEGER NOT NULL)"
+                )
             }
         }
     }

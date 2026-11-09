@@ -99,6 +99,8 @@ class TrackingService : LifecycleService() {
     private var carAddresses: Set<String> = emptySet()
     private var carConnected = false
     private var carReceiverOn = false
+    /** 내 차 승차·하차와 주차 위치·층 기록 */
+    private val parking by lazy { com.dot.trace.parking.ParkingRecorder(this, app, lifecycleScope) }
 
     /** 내 차와 블루투스가 연결·해제될 때 */
     private val carReceiver = object : BroadcastReceiver() {
@@ -121,6 +123,7 @@ class TrackingService : LifecycleService() {
         if (carConnected) return
         carConnected = true
         updateStatus { it.copy(inCar = true) }
+        parking.onConnected()
         if (mode == Mode.Still) resumeMoving()
         if ((mode == Mode.Normal || mode == Mode.Walk || mode == Mode.Still) && intervalMs > FAST_INTERVAL_MS) applyMode(Mode.Fast)
     }
@@ -130,6 +133,8 @@ class TrackingService : LifecycleService() {
         if (!carConnected) return
         carConnected = false
         updateStatus { it.copy(inCar = false) }
+        // 주차 기록: 입구 위치(모아 둔 위치를 바로 받아서) + 기압 + 와이파이
+        parking.onDisconnected(lastSavedLocation) { fused.flushLocations() }
         captureNow()
     }
 
@@ -149,6 +154,7 @@ class TrackingService : LifecycleService() {
         if (!carReceiverOn) return
         carReceiverOn = false
         runCatching { unregisterReceiver(carReceiver) }
+        parking.stop()
         carConnected = false
     }
     /** 신호를 잃기 직전 마지막으로 저장한 시각. 다시 잡힌 첫 위치에 '끊겨 있던 시간'을 남긴다 */
@@ -357,6 +363,7 @@ class TrackingService : LifecycleService() {
     }
 
     private fun handleLocations(locations: List<Location>, maxAccuracy: Float = MAX_ACCURACY_M, force: Boolean = false) {
+        parking.onLocations(locations)
         val good = locations.filter { it.hasAccuracy() && it.accuracy <= maxAccuracy && it.time > lastSavedTime }
         if (good.isEmpty()) {
             checkOverdue()

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- 주차 사진 (카메라 앱이 여기에 저장) -->
+    <files-path name="parking" path="parking/" />
+</paths>

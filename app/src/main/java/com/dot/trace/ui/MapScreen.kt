@@ -91,6 +91,8 @@ import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.time.Instant
 import java.time.LocalDate
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.compose.rememberLauncherForActivityResult
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import java.util.Date
@@ -127,6 +129,27 @@ fun MapScreen(
     // (점, 탑승인지) — 탑승이면 고른 수단으로 A~B 지정을 시작
     var modePick by remember { mutableStateOf<Pair<PointEntity, Boolean>?>(null) }
     val boarding by vm.boarding.collectAsStateWithLifecycle()
+    // 내 차 주차
+    val parkings by vm.parkings.collectAsStateWithLifecycle()
+    val selectedParkingId by vm.selectedParkingId.collectAsStateWithLifecycle()
+    val selectedParking = parkings.firstOrNull { it.id == selectedParkingId }
+    val currentParking = parkings.firstOrNull { it.leftAt == null }
+    var editParking by remember { mutableStateOf<com.dot.trace.data.ParkingEntity?>(null) }
+    var showParkingPhoto by remember { mutableStateOf<String?>(null) }
+    var photoTarget by remember { mutableStateOf<Pair<Long, String>?>(null) }
+    val takePhoto = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
+        val t = photoTarget
+        if (ok && t != null) vm.setParkingPhoto(t.first, t.second)
+        else t?.let { java.io.File(parkingPhotoDir(context), it.second).delete() }
+        photoTarget = null
+    }
+    fun startPhoto(p: com.dot.trace.data.ParkingEntity) {
+        val name = "p${p.id}_${System.currentTimeMillis()}.jpg"
+        val f = java.io.File(parkingPhotoDir(context), name)
+        val uri = androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.files", f)
+        photoTarget = p.id to name
+        runCatching { takePhoto.launch(uri) }
+    }
     val suggestion by vm.suggestion.collectAsStateWithLifecycle()
     var selectedTrip by remember { mutableStateOf<Segment?>(null) }
     val status by vm.status.collectAsStateWithLifecycle()
@@ -267,6 +290,16 @@ fun MapScreen(
             onStayClick = { st -> selectedStay = st; selected = null; selectedTrip = null },
             styleName = settings.mapStyle,
             places = places,
+            parkings = run {
+                val from = date.atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+                val to = date.plusDays(1).atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+                val day = parkings.filter { it.parkedAt in from until to }
+                (if (date == LocalDate.now()) day + listOfNotNull(currentParking) else day).distinctBy { it.id }
+            },
+            onParkingClick = { pk ->
+                vm.selectParking(pk.id)
+                selected = null; selectedStay = null; selectedTrip = null
+            },
             boardingAt = boarding?.let { com.google.android.gms.maps.model.LatLng(it.lat, it.lng) to "${it.mode.label} 탑승" },
             me = me,
             onReady = { mapLoaded = true },
@@ -373,6 +406,16 @@ fun MapScreen(
             Modifier.align(Alignment.BottomCenter).fillMaxWidth().navigationBarsPadding().padding(16.dp),
             horizontalAlignment = Alignment.End,
         ) {
+            // 지금 주차 중이면 '내 차' 버튼
+            currentParking?.let { cp ->
+                MyCarButton(alpha = panelAlpha) {
+                    vm.selectParking(cp.id)
+                    selected = null; selectedStay = null; selectedTrip = null
+                    if (date != LocalDate.now()) vm.selectDate(LocalDate.now())
+                    controller.moveTo(cp.lat, cp.lng, 17.0)
+                }
+                Spacer(Modifier.height(10.dp))
+            }
             // 확대·축소
             Surface(
                 shape = RoundedCornerShape(24.dp),
@@ -415,7 +458,15 @@ fun MapScreen(
                 }
             }
             Spacer(Modifier.height(12.dp))
-            StatusCard(
+            if (selectedParking != null) ParkingCard(
+                p = selectedParking,
+                alpha = panelAlpha,
+                onClose = { vm.selectParking(null) },
+                onConfirmFloor = { vm.confirmFloor(selectedParking) },
+                onEdit = { editParking = selectedParking },
+                onTakePhoto = { startPhoto(selectedParking) },
+                onShowPhoto = { showParkingPhoto = selectedParking.photo },
+            ) else StatusCard(
                 status = status,
                 pointCount = points.size,
                 distanceKm = distanceKm,
@@ -478,6 +529,15 @@ fun MapScreen(
                     }
                 },
                 onEdit = { editing = it },
+                parkings = parkings,
+                dayFrom = date.atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli(),
+                dayTo = date.plusDays(1).atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli(),
+                onPickParking = { pk ->
+                    showTimeline = false
+                    vm.selectParking(pk.id)
+                    selected = null; selectedStay = null; selectedTrip = null
+                    controller.moveTo(pk.lat, pk.lng, 17.0)
+                },
             )
         }
     }
@@ -501,6 +561,14 @@ fun MapScreen(
             }
         }
     }
+
+    editParking?.let { pk ->
+        FloorZoneDialog(pk, onDismiss = { editParking = null }) { floor, zone ->
+            vm.saveFloorZone(pk, floor, zone)
+            editParking = null
+        }
+    }
+    showParkingPhoto?.let { name -> ParkingPhotoDialog(name) { showParkingPhoto = null } }
 
     modePick?.let { (p, board) ->
         val t = SimpleDateFormat("HH:mm", Locale.KOREA).format(Date(p.time))

@@ -76,8 +76,26 @@ fun TimelinePanel(
     onPick: (Segment) -> Unit,
     onEdit: (Segment) -> Unit,
     modifier: Modifier = Modifier,
+    /** 이 날의 내 차 승차·하차 (B안) */
+    parkings: List<com.dot.trace.data.ParkingEntity> = emptyList(),
+    dayFrom: Long = 0L,
+    dayTo: Long = Long.MAX_VALUE,
+    onPickParking: (com.dot.trace.data.ParkingEntity) -> Unit = {},
 ) {
     androidx.activity.compose.BackHandler(onBack = onClose)
+    // 승차·하차 이벤트를 이동·머문 곳 사이에 시간순으로 끼워 넣는다
+    val events = remember(parkings, dayFrom, dayTo) {
+        buildList {
+            for (pk in parkings) {
+                if (pk.parkedAt in dayFrom until dayTo) add(Triple(pk.parkedAt, true, pk))
+                pk.leftAt?.let { if (it in dayFrom until dayTo) add(Triple(it, false, pk)) }
+            }
+        }
+    }
+    val rows: List<Any> = remember(segments, events) {
+        (segments.map { it.start to (it as Any) } + events.map { it.first to (it as Any) })
+            .sortedBy { it.first }.map { it.second }
+    }
     val moves = segments.filter { !it.stay }
     val km = moves.sumOf { it.distanceM } / 1000
     val moveMs = moves.sumOf { it.durationMs }
@@ -107,7 +125,8 @@ fun TimelinePanel(
             Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 SummaryTile("이동 거리", "%.1f km".format(Locale.US, km), Modifier.weight(1f))
                 SummaryTile("이동 시간", durationText(moveMs), Modifier.weight(1f))
-                SummaryTile("머문 곳", "${segments.count { it.stay }}곳", Modifier.weight(1f))
+                if (events.isNotEmpty()) SummaryTile("내 차 승하차", "${events.size}회", Modifier.weight(1f))
+                else SummaryTile("머문 곳", "${segments.count { it.stay }}곳", Modifier.weight(1f))
             }
             Text(
                 "누르면 지도에서 보여 주고, 연필을 누르면 이름이나 이동 수단을 고칠 수 있어요. 고친 내용은 다음에도 기억해요.",
@@ -124,8 +143,20 @@ fun TimelinePanel(
                 )
             }
             LazyColumn(Modifier.weight(1f)) {
-                itemsIndexed(segments, key = { _, s -> "${s.stay}-${s.start}" }) { i, s ->
-                    TimelineRow(s, first = i == 0, last = i == segments.lastIndex, onClick = { onPick(s) }, onEdit = { onEdit(s) })
+                itemsIndexed(rows, key = { _, r ->
+                    when (r) {
+                        is Segment -> "${r.stay}-${r.start}"
+                        is Triple<*, *, *> -> "ev-${r.first}-${r.second}"
+                        else -> r.hashCode()
+                    }
+                }) { i, r ->
+                    when (r) {
+                        is Segment -> TimelineRow(r, first = i == 0, last = i == rows.lastIndex, onClick = { onPick(r) }, onEdit = { onEdit(r) })
+                        is Triple<*, *, *> -> {
+                            val pk = r.third as com.dot.trace.data.ParkingEntity
+                            ParkingEventRow(pk, alight = r.second as Boolean, time = r.first as Long, onClick = { onPickParking(pk) })
+                        }
+                    }
                 }
                 // Google 장소 정보로 붙인 이름이 있으면 출처 표시
                 if (segments.any { it.nameFromGoogle }) {

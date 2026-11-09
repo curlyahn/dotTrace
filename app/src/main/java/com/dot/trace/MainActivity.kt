@@ -165,6 +165,12 @@ class MainActivity : ComponentActivity() {
             ACTION_RESUME_TRACKING -> requestStart()
             // 리포트 알림을 눌렀을 때
             ACTION_OPEN_REPORT -> route = "stats/${intent.getStringExtra(EXTRA_REPORT_KEY) ?: "-"}"
+            // 주차 알림을 눌렀을 때: 지도에서 그 주차 카드 열기
+            ACTION_OPEN_PARKING -> {
+                route = "map"
+                val id = intent.getLongExtra(com.dot.trace.parking.ParkingRepo.EXTRA_ID, -1)
+                if (id >= 0) vm.selectParking(id)
+            }
         }
     }
 
@@ -231,6 +237,7 @@ class MainActivity : ComponentActivity() {
     companion object {
         const val ACTION_RESUME_TRACKING = "com.dot.trace.RESUME_TRACKING"
         const val ACTION_OPEN_REPORT = "com.dot.trace.OPEN_REPORT"
+        const val ACTION_OPEN_PARKING = "com.dot.trace.OPEN_PARKING"
         const val EXTRA_REPORT_KEY = "report_key"
     }
 }

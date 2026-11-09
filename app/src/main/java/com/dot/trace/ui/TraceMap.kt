@@ -136,6 +136,9 @@ fun TraceMap(
     onStayClick: ((Segment) -> Unit)? = null,
     /** '여기서 탑승'을 누른 곳 (하차를 정할 때까지 표시) */
     boardingAt: Pair<LatLng, String>? = null,
+    /** 내 차 주차 위치 */
+    parkings: List<com.dot.trace.data.ParkingEntity> = emptyList(),
+    onParkingClick: ((com.dot.trace.data.ParkingEntity) -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val density = LocalDensity.current
@@ -294,6 +297,22 @@ fun TraceMap(
             }
         }
 
+        // 내 차 주차: 연두 P + 층·시각
+        parkings.forEach { pk ->
+            key("parking", pk.id) {
+                val label = com.dot.trace.parking.FloorEstimator.label(pk.shownFloor) + " · " +
+                    java.text.SimpleDateFormat("HH:mm", java.util.Locale.KOREA).format(java.util.Date(pk.parkedAt))
+                val icon = remember(label, pk.confirmed) { parkingDescriptor(label, d) }
+                Marker(
+                    state = remember(pk.lat, pk.lng) { MarkerState(LatLng(pk.lat, pk.lng)) },
+                    icon = icon.first,
+                    anchor = Offset(0.5f, icon.second),
+                    zIndex = 7f,
+                    onClick = { onParkingClick?.invoke(pk); true },
+                )
+            }
+        }
+
         boardingAt?.let { (ll, label) ->
             key("boarding", ll.latitude, ll.longitude, label) {
                 val icon = remember(label) { labeledDescriptor(Dot.Lime, Dot.Ink, 9, 3f, label, 12f, d) }
@@ -374,6 +393,39 @@ private fun dotDescriptor(fill: Color, stroke: Color, sizeDp: Int, density: Floa
     c.drawCircle(r, r, r, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = stroke.toArgb() })
     c.drawCircle(r, r, r - strokeW, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = fill.toArgb() })
     return BitmapDescriptorFactory.fromBitmap(bmp)
+}
+
+/** 주차 핀: 검은 테두리 연두 네모 P + 아래 검은 알약 이름표. 돌려주는 값: 아이콘, 네모 가운데 세로 위치 */
+private fun parkingDescriptor(label: String, density: Float): Pair<BitmapDescriptor, Float> {
+    val box = 34 * density
+    val text = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        textSize = 11 * density; typeface = Typeface.DEFAULT_BOLD; textAlign = Paint.Align.CENTER
+        color = Dot.Lime.toArgb()
+    }
+    val padH = 8 * density
+    val pillW = text.measureText(label) + padH * 2
+    val pillH = 18 * density
+    val w = maxOf(box + 4 * density, pillW).toInt() + 2
+    val h = (box + 4 * density + pillH + 2 * density).toInt()
+    val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+    val c = Canvas(bmp)
+    val cx = w / 2f
+    val top = 2 * density
+    val r = 9 * density
+    val rect = android.graphics.RectF(cx - box / 2, top, cx + box / 2, top + box)
+    c.drawRoundRect(rect, r, r, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Dot.Ink.toArgb() })
+    val inner = android.graphics.RectF(rect.left + 3 * density, rect.top + 3 * density, rect.right - 3 * density, rect.bottom - 3 * density)
+    c.drawRoundRect(inner, r * 0.7f, r * 0.7f, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Dot.Lime.toArgb() })
+    val pPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        textSize = 18 * density; typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD); textAlign = Paint.Align.CENTER
+        color = Dot.Ink.toArgb()
+    }
+    c.drawText("P", cx, rect.centerY() - (pPaint.ascent() + pPaint.descent()) / 2, pPaint)
+    val pillTop = rect.bottom + 2 * density
+    val pill = android.graphics.RectF(cx - pillW / 2, pillTop, cx + pillW / 2, pillTop + pillH)
+    c.drawRoundRect(pill, pillH / 2, pillH / 2, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Dot.Ink.toArgb() })
+    c.drawText(label, cx, pill.centerY() - (text.ascent() + text.descent()) / 2, text)
+    return BitmapDescriptorFactory.fromBitmap(bmp) to (rect.centerY() / h)
 }
 
 /** 현재 위치: 옅은 파란 원 + 흰 테두리 파란 점 */
