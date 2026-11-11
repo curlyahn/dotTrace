@@ -387,7 +387,9 @@ private fun CommuteCard(r: Report) {
         }
         }
         Text(
-            "한 번의 출퇴근 수단 = 그중 가장 길게 이동한 수단 (예: 지하철 17km + 자전거 1km → 지하철)",
+            "한 번의 출퇴근 수단 = 그중 가장 길게 이동한 수단 (예: 지하철 17km + 자전거 1km → 지하철). " +
+                "중간에 들른 곳(탁구 등)이 있어도 집↔회사면 출퇴근으로 세고, 시간은 이동한 시간만 더해요." +
+                (if (list.any { it.stops > 0 }) " 들렀다 간 출퇴근 ${list.count { it.stops > 0 }}회." else ""),
             style = MaterialTheme.typography.labelSmall,
             color = Dot.Faint,
         )

@@ -93,7 +93,8 @@ object ReportBuilder {
             val clusters = ArrayList<Cluster>()
             var points = 0
             var days = 0
-            val commutes = ArrayList<Commute>()
+            // 출퇴근은 자정을 넘길 수 있어 기간 전체를 이어 붙인 뒤 찾는다
+            val allSegs = ArrayList<com.dot.trace.trips.Segment>()
 
             val store = DayStore(db)
             val periodFrom = period.start.atStartOfDay(zone).toInstant().toEpochMilli()
@@ -114,7 +115,7 @@ object ReportBuilder {
                     days++
                     points += db.points().countBetween(from, to)
                     val daySegs = DayAnalyzer.applyUser(raw, corrections)
-                    commutes += CommuteFinder.find(daySegs)
+                    allSegs += daySegs
                     for (seg in daySegs) {
                         val dur = seg.end - seg.start
                         if (seg.stay) {
@@ -164,7 +165,7 @@ object ReportBuilder {
                 modes = modes,
                 topPlaces = stays.take(10),
                 regions = regions,
-                commutes = commutes,
+                commutes = CommuteFinder.find(allSegs),
                 hasHomeWork = places.any { it.kind == com.dot.trace.data.PlaceEntity.HOME } &&
                     places.any { it.kind == com.dot.trace.data.PlaceEntity.WORK },
             )
