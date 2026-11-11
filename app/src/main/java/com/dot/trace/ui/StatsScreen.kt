@@ -38,6 +38,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.runtime.remember
+import androidx.compose.foundation.border
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -127,6 +129,9 @@ private fun ReportBody(r: Report, onShowPlace: (Double, Double) -> Unit) {
             color = Dot.Muted,
         )
     }
+
+    // 출퇴근 (A안)
+    CommuteCard(r)
 
     // 이동 수단별
     if (r.modes.isNotEmpty()) {
@@ -295,3 +300,96 @@ fun parsePeriod(key: String): Period = runCatching {
         else -> Period.Month(YearMonth.parse(key.drop(1)))
     }
 }.getOrElse { defaultPeriod() }
+
+/** 출퇴근 카드: 횟수 · 수단 비율 띠 · 수단별 횟수/비율/평균 시간. [전체·출근·퇴근] */
+@Composable
+private fun CommuteCard(r: Report) {
+    if (!r.hasHomeWork) {
+        Spacer(Modifier.height(16.dp))
+        Text(
+            "내 장소에 집과 회사를 등록하면 출퇴근 통계를 보여 줘요.",
+            style = MaterialTheme.typography.bodySmall,
+            color = Dot.Muted,
+            modifier = Modifier.padding(horizontal = 4.dp),
+        )
+        return
+    }
+    if (r.commutes.isEmpty()) return
+    var filter by remember { mutableStateOf(0) } // 0 전체, 1 출근, 2 퇴근
+    val list = when (filter) {
+        1 -> r.commutes.filter { it.toWork }
+        2 -> r.commutes.filter { !it.toWork }
+        else -> r.commutes
+    }
+    Spacer(Modifier.height(16.dp))
+    Column(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(Dot.Surface)
+            .border(1.dp, Dot.Lime.copy(alpha = 0.35f), RoundedCornerShape(24.dp)).padding(16.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("출퇴근", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = Dot.Text, modifier = Modifier.weight(1f))
+            listOf("전체", "출근", "퇴근").forEachIndexed { i, t ->
+                val on = i == filter
+                Text(
+                    t,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = if (on) Dot.OnLime else Dot.Muted,
+                    modifier = Modifier.padding(start = 6.dp).clip(RoundedCornerShape(50))
+                        .background(if (on) Dot.Lime else Dot.Surface2)
+                        .clickable { filter = i }.padding(horizontal = 12.dp, vertical = 5.dp),
+                )
+            }
+        }
+        if (list.isEmpty()) {
+            Spacer(Modifier.height(10.dp))
+            Text("이 기간에는 기록이 없어요.", style = MaterialTheme.typography.bodySmall, color = Dot.Muted)
+        } else {
+        Spacer(Modifier.height(10.dp))
+        Row(verticalAlignment = Alignment.Bottom) {
+            Text("${list.size}", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black, color = Dot.Text)
+            Text(
+                when (filter) { 1 -> " 회 · 집 → 회사"; 2 -> " 회 · 회사 → 집"; else -> " 회 · 집 ↔ 회사" },
+                style = MaterialTheme.typography.bodySmall, color = Dot.Muted, modifier = Modifier.padding(bottom = 6.dp),
+            )
+            Spacer(Modifier.weight(1f))
+            Text(
+                "평균 ${duration(list.sumOf { it.durationMs } / list.size)} · 편도 ${km(list.sumOf { it.distanceM } / list.size)}km",
+                style = MaterialTheme.typography.labelSmall, color = Dot.Muted, modifier = Modifier.padding(bottom = 6.dp),
+            )
+        }
+        // 수단별 (많이 쓴 순)
+        val groups = list.groupBy { it.mode }.entries.sortedByDescending { it.value.size }
+        Spacer(Modifier.height(8.dp))
+        Row(Modifier.fillMaxWidth().height(14.dp).clip(RoundedCornerShape(50))) {
+            groups.forEach { (m, l) ->
+                Box(Modifier.weight(l.size.toFloat()).fillMaxHeight().background(ModeStyle.color(m)))
+            }
+        }
+        groups.firstOrNull()?.let { (m, _) ->
+            Spacer(Modifier.height(6.dp))
+            Text("주로 ${m.label}${if (m.label.last().let { val j = (it.code - 0xAC00) % 28; j == 0 || j == 8 }) "로" else "으로"} 출퇴근했어요",
+                style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = Dot.Lime)
+        }
+        Spacer(Modifier.height(6.dp))
+        groups.forEach { (m, l) ->
+            Box(Modifier.fillMaxWidth().height(1.dp).background(Dot.Line))
+            Row(Modifier.fillMaxWidth().padding(vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(10.dp).clip(RoundedCornerShape(3.dp)).background(ModeStyle.color(m)))
+                Spacer(Modifier.width(10.dp))
+                Text(m.label, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold, color = Dot.Text, modifier = Modifier.weight(1f))
+                Text("평균 ${duration(l.sumOf { it.durationMs } / l.size)}", style = MaterialTheme.typography.labelSmall, color = Dot.Muted, maxLines = 1)
+                Text("${l.size}회", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold, color = Dot.Text,
+                    modifier = Modifier.width(52.dp), textAlign = androidx.compose.ui.text.style.TextAlign.End)
+                Text("${l.size * 100 / list.size}%", style = MaterialTheme.typography.labelMedium, color = ModeStyle.color(m),
+                    modifier = Modifier.width(44.dp), textAlign = androidx.compose.ui.text.style.TextAlign.End)
+            }
+        }
+        }
+        Text(
+            "한 번의 출퇴근 수단 = 그중 가장 길게 이동한 수단 (예: 지하철 17km + 자전거 1km → 지하철)",
+            style = MaterialTheme.typography.labelSmall,
+            color = Dot.Faint,
+        )
+    }
+}

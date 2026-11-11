@@ -70,6 +70,10 @@ data class Report(
     val modes: List<ModeStat>,
     val topPlaces: List<StayPlace>,
     val regions: List<RegionStat>,
+    /** 집↔회사 출퇴근 (수단 = 가장 긴 거리를 이동한 수단) */
+    val commutes: List<Commute> = emptyList(),
+    /** 집과 회사가 둘 다 등록돼 있는지 (없으면 출퇴근을 셀 수 없음) */
+    val hasHomeWork: Boolean = false,
 ) {
     val isEmpty get() = points == 0
 }
@@ -89,6 +93,7 @@ object ReportBuilder {
             val clusters = ArrayList<Cluster>()
             var points = 0
             var days = 0
+            val commutes = ArrayList<Commute>()
 
             val store = DayStore(db)
             val periodFrom = period.start.atStartOfDay(zone).toInstant().toEpochMilli()
@@ -108,7 +113,9 @@ object ReportBuilder {
                 if (raw.isNotEmpty()) {
                     days++
                     points += db.points().countBetween(from, to)
-                    for (seg in DayAnalyzer.applyUser(raw, corrections)) {
+                    val daySegs = DayAnalyzer.applyUser(raw, corrections)
+                    commutes += CommuteFinder.find(daySegs)
+                    for (seg in daySegs) {
                         val dur = seg.end - seg.start
                         if (seg.stay) {
                             val lat = seg.lat
@@ -157,6 +164,9 @@ object ReportBuilder {
                 modes = modes,
                 topPlaces = stays.take(10),
                 regions = regions,
+                commutes = commutes,
+                hasHomeWork = places.any { it.kind == com.dot.trace.data.PlaceEntity.HOME } &&
+                    places.any { it.kind == com.dot.trace.data.PlaceEntity.WORK },
             )
         }
 
