@@ -165,7 +165,7 @@ object ReportBuilder {
                 modes = modes,
                 topPlaces = stays.take(10),
                 regions = regions,
-                commutes = CommuteFinder.find(allSegs),
+                commutes = CommuteFinder.find(allSegs, places),
                 hasHomeWork = places.any { it.kind == com.dot.trace.data.PlaceEntity.HOME } &&
                     places.any { it.kind == com.dot.trace.data.PlaceEntity.WORK },
             )
