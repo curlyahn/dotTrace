@@ -34,7 +34,8 @@ class ParkingRecorder(
 ) : SensorEventListener {
 
     private val sm = context.getSystemService(SensorManager::class.java)
-    private val baro: Sensor? = sm?.getDefaultSensor(Sensor.TYPE_PRESSURE)
+    // 화면이 꺼져도 값이 들어오도록 깨우는 방식의 기압 센서를 먼저 쓴다
+    private val baro: Sensor? = sm?.getDefaultSensor(Sensor.TYPE_PRESSURE, true) ?: sm?.getDefaultSensor(Sensor.TYPE_PRESSURE)
     private var listening = false
 
     /** (벽시계 ms, hPa) */
@@ -71,8 +72,12 @@ class ParkingRecorder(
         scope.launch {
             delay(5_000)
             val entry = lastCarFix ?: fallback ?: return@launch
-            val entryHpa = pressureAt(entry.time)
-            val parkHpa = pressureAt(at) ?: history.lastOrNull()?.second
+            // 입구: 입구 GPS 전 90초 동안의 기압 중앙값 (값 하나만 집으면 하차 값과 같은 값이 될 수 있음)
+            val entryWin = history.filter { it.first in (entry.time - 90_000L)..(entry.time + 5_000L) }.map { it.second }
+            val entryHpa = if (entryWin.size >= 3) median(entryWin) else null
+            // 하차: 지금 4초 동안 빠르게 새로 재서 중앙값
+            val fresh = freshPressure(4_000L)
+            val parkHpa = if (fresh.size >= 3) median(fresh) else null
             var p = ParkingEntity(
                 parkedAt = at,
                 lat = entry.latitude,
@@ -82,6 +87,8 @@ class ParkingRecorder(
                 entryHpa = entryHpa,
                 parkHpa = parkHpa,
                 wifi = wifi,
+                entrySamples = entryWin.size,
+                parkSamples = fresh.size,
             )
             val a = app.db.analysis()
             // 같은 시각 기록이 이미 있으면(연결이 짧게 끊겼다 붙은 경우) 새로 만들지 않는다
@@ -152,6 +159,23 @@ class ParkingRecorder(
     }
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+
+    private fun median(v: List<Float>): Float = v.sorted().let { s -> if (s.size % 2 == 1) s[s.size / 2] else (s[s.size / 2 - 1] + s[s.size / 2]) / 2f }
+
+    /** 지금 기압을 [ms] 동안 빠르게 읽은 값들 */
+    private suspend fun freshPressure(ms: Long): List<Float> {
+        val s = baro ?: return emptyList()
+        val m = sm ?: return emptyList()
+        val values = java.util.Collections.synchronizedList(ArrayList<Float>())
+        val l = object : SensorEventListener {
+            override fun onSensorChanged(e: SensorEvent) { values += e.values[0] }
+            override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+        }
+        if (!m.registerListener(l, s, SensorManager.SENSOR_DELAY_FASTEST)) return emptyList()
+        delay(ms)
+        runCatching { m.unregisterListener(l) }
+        return synchronized(values) { values.toList() }
+    }
 
     /** 그 시각에 가장 가까운 기압 (30초 안에 값이 없으면 null) */
     private fun pressureAt(t: Long): Float? =

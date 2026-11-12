@@ -164,6 +164,9 @@ data class ParkingEntity(
     val zone: String? = null,
     /** 사진 파일 이름 (앱 안 files/parking/) */
     val photo: String? = null,
+    /** 기압 측정에 쓴 값 개수 (입구, 하차) — 측정이 제대로 됐는지 확인용 */
+    val entrySamples: Int? = null,
+    val parkSamples: Int? = null,
 ) {
     /** 화면에 보일 층: 확인한 층, 없으면 추정 */
     val shownFloor: Int? get() = floor ?: floorEst
@@ -377,7 +380,7 @@ interface AnalysisDao {
 
 @Database(
     entities = [PointEntity::class, PlaceEntity::class, OverrideEntity::class, ModeRuleEntity::class, PoiNameEntity::class, DayCacheEntity::class, ModeSpanEntity::class, ParkingEntity::class, FloorCalibEntity::class, FrozenDayEntity::class],
-    version = 10,
+    version = 11,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -390,7 +393,7 @@ abstract class AppDatabase : RoomDatabase() {
 
         fun get(context: Context): AppDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(context.applicationContext, AppDatabase::class.java, "dottrace.db")
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11)
                 .build()
                 .also { instance = it }
         }
@@ -500,6 +503,14 @@ abstract class AppDatabase : RoomDatabase() {
                     "CREATE TABLE IF NOT EXISTS frozen_days (day TEXT PRIMARY KEY NOT NULL, " +
                         "pointCount INTEGER NOT NULL, frozenAt INTEGER NOT NULL, data TEXT NOT NULL)"
                 )
+            }
+        }
+
+        /** 주차 기압 측정 개수 */
+        private val MIGRATION_10_11 = object : Migration(10, 11) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE parkings ADD COLUMN entrySamples INTEGER")
+                db.execSQL("ALTER TABLE parkings ADD COLUMN parkSamples INTEGER")
             }
         }
     }

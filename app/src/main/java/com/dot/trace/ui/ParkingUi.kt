@@ -173,7 +173,11 @@ fun ParkingCard(
                         (if (p.confirmed) "(직접 확인)" else "(${FloorEstimator.sourceLabel(p.floorSource)})"),
                 )
                 p.entryAt?.let { InfoRow("입구", "정확한 GPS ${fmt.format(Date(it))} · 진입 후 ${durationText((p.parkedAt - it).coerceAtLeast(0))}") }
-                p.deltaHpa?.let { InfoRow("기압 차", "%+.2f hPa".format(Locale.US, it)) }
+                InfoRow(
+                    "기압 차",
+                    p.deltaHpa?.let { "%+.2f hPa".format(Locale.US, it) + (p.entrySamples?.let { n -> " (입구 ${n}개 · 주차 ${p.parkSamples ?: 0}개 측정)" } ?: "") }
+                        ?: if (p.entrySamples != null) "측정 부족 (입구 ${p.entrySamples}개 · 주차 ${p.parkSamples ?: 0}개)" else "없음",
+                )
             }
             // 층 확인 (추정일 때만)
             if (!p.confirmed && p.floorEst != null) {

@@ -54,8 +54,8 @@ object FloorEstimator {
         }
 
         if (deltaHpa != null) {
-            // 2) 학습한 기압
-            val samples = local.mapNotNull { c -> c.deltaHpa?.let { it to c.floor } }
+            // 2) 학습한 기압 (층과 기압 차가 맞지 않는 값은 측정이 잘못된 것이라 뺀다)
+            val samples = local.filter { plausible(it) }.mapNotNull { c -> c.deltaHpa?.let { it to c.floor } }
             if (samples.isNotEmpty()) {
                 val floors = samples.map { it.second }.distinct()
                 if (floors.size >= 2) {
@@ -89,6 +89,14 @@ object FloorEstimator {
         val hpaPerFloor = -1.0 / b
         if (b >= 0 || hpaPerFloor !in 0.2..0.6) return null
         return (my - b * mx) to b
+    }
+
+    /** 확인한 층과 그때 기압 차가 상식적으로 맞는지 (층당 0.2~0.6hPa, 지상이면 거의 0) */
+    fun plausible(c: FloorCalibEntity): Boolean {
+        val d = c.deltaHpa ?: return false
+        if (c.floor == 0) return abs(d) < 0.25f
+        val perFloor = d / -c.floor
+        return perFloor in 0.2f..0.6f
     }
 
     fun bssids(s: String?): Set<String> =
