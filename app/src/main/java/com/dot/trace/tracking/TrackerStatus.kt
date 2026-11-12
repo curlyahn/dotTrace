@@ -31,6 +31,8 @@ data class TrackerStatus(
     val retryIntervalMs: Long? = null,
     /** 등록한 내 차와 블루투스로 연결되어 있음 */
     val inCar: Boolean = false,
+    /** 내 차로 주차했던 곳 근처 (3초마다 기록 중) */
+    val nearParking: Boolean = false,
 ) {
     val running: Boolean get() = phase != Phase.Idle
 }

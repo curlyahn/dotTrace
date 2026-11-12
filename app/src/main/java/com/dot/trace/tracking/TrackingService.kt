@@ -1,6 +1,7 @@
 package com.dot.trace.tracking
 
 import com.dot.trace.trips.ActivityCode
+import com.dot.trace.data.Geo
 
 import android.Manifest
 import android.annotation.SuppressLint
@@ -98,6 +99,9 @@ class TrackingService : LifecycleService() {
     /** 등록한 내 차 블루투스 주소들과, 지금 연결되어 있는지 */
     private var carAddresses: Set<String> = emptySet()
     private var carConnected = false
+    /** 주차했던 곳들 (내 차로 이 근처에 오면 3초마다 기록해 입구 위치를 정확히) */
+    private var knownParkingSpots: List<Pair<Double, Double>> = emptyList()
+    private var nearParking = false
     private var carReceiverOn = false
     /** 내 차 승차·하차와 주차 위치·층 기록 */
     private val parking by lazy { com.dot.trace.parking.ParkingRecorder(this, app, lifecycleScope) }
@@ -124,6 +128,9 @@ class TrackingService : LifecycleService() {
         carConnected = true
         updateStatus { it.copy(inCar = true) }
         parking.onConnected()
+        lifecycleScope.launch {
+            knownParkingSpots = app.db.analysis().parkingsBetween(0L, Long.MAX_VALUE).map { it.lat to it.lng }
+        }
         if (mode == Mode.Still) resumeMoving()
         if ((mode == Mode.Normal || mode == Mode.Walk || mode == Mode.Still) && intervalMs > FAST_INTERVAL_MS) applyMode(Mode.Fast)
     }
@@ -132,6 +139,7 @@ class TrackingService : LifecycleService() {
     private fun onCarDisconnected() {
         if (!carConnected) return
         carConnected = false
+        setNearParking(false)
         updateStatus { it.copy(inCar = false) }
         // 주차 기록: 입구 위치(모아 둔 위치를 바로 받아서) + 기압 + 와이파이
         parking.onDisconnected(lastSavedLocation) { fused.flushLocations() }
@@ -323,8 +331,13 @@ class TrackingService : LifecycleService() {
                 .setMinUpdateIntervalMillis(WALK_INTERVAL_MS)
                 .setMaxUpdateDelayMillis(WALK_BATCH_MS)
                 .build()
+            // 내 차로 주차했던 곳 근처: 3초마다, 모으지 않고 바로 받는다 (주차장 입구 위치를 정확히)
+            Mode.Fast -> if (nearParking) LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, NEAR_PARKING_INTERVAL_MS)
+                .setMinUpdateIntervalMillis(NEAR_PARKING_INTERVAL_MS)
+                .setMaxUpdateDelayMillis(0)
+                .build()
             // 탈것·빠르게 이동 중: 10초마다. 최대 1분치를 모아서 전달 → 매 10초마다 깨지 않음
-            Mode.Fast -> LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, FAST_INTERVAL_MS)
+            else LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, FAST_INTERVAL_MS)
                 .setMinUpdateIntervalMillis(FAST_INTERVAL_MS)
                 .setMaxUpdateDelayMillis(FAST_BATCH_MS)
                 .build()
@@ -371,7 +384,7 @@ class TrackingService : LifecycleService() {
         }
         // 한 번에 여러 개가 오면(모아서 전달) 주기보다 촘촘한 것은 건너뛴다
         val minGap = when (mode) {
-            Mode.Fast -> FAST_INTERVAL_MS - 3_000L
+            Mode.Fast -> if (nearParking) NEAR_PARKING_INTERVAL_MS - 1_000L else FAST_INTERVAL_MS - 3_000L
             Mode.Still -> STILL_INTERVAL_MS - 5_000L
             else -> intervalMs - 5_000L
         }
@@ -415,6 +428,15 @@ class TrackingService : LifecycleService() {
         val newest = toSave.last()
         lastSavedLocation = newest
         updateStatus { it.copy(lastFixAt = newest.time, lastAccuracy = newest.accuracy) }
+
+        // 내 차로 주차했던 곳 300m 안이면 3초 주기로 (벗어나면 원래대로)
+        if (carConnected) {
+            val near = knownParkingSpots.any { (la, ln) -> Geo.distance(newest.latitude, newest.longitude, la, ln) <= NEAR_PARKING_M }
+            if (near != nearParking) {
+                setNearParking(near)
+                if (near && mode != Mode.Fast && mode != Mode.Still) applyMode(Mode.Fast)
+            }
+        }
 
         val speed = estimateSpeed(prevSaved, toSave)
         when (mode) {
@@ -518,7 +540,7 @@ class TrackingService : LifecycleService() {
         when (mode) {
             Mode.Normal, Mode.Walk, Mode.Fast -> {
                 val expected = when (mode) {
-                    Mode.Fast -> FAST_BATCH_MS
+                    Mode.Fast -> if (nearParking) 10_000L else FAST_BATCH_MS
                     Mode.Walk -> WALK_BATCH_MS
                     else -> intervalMs * 2
                 }
@@ -536,8 +558,15 @@ class TrackingService : LifecycleService() {
         }
     }
 
+    private fun setNearParking(on: Boolean) {
+        if (nearParking == on) return
+        nearParking = on
+        updateStatus { it.copy(nearParking = on) }
+        if (mode == Mode.Fast) applyMode(Mode.Fast)
+    }
+
     private fun intervalFor(m: Mode) = when (m) {
-        Mode.Fast -> FAST_INTERVAL_MS
+        Mode.Fast -> if (nearParking) NEAR_PARKING_INTERVAL_MS else FAST_INTERVAL_MS
         Mode.Walk -> WALK_INTERVAL_MS
         else -> intervalMs
     }
@@ -612,7 +641,8 @@ class TrackingService : LifecycleService() {
         return when (s.phase) {
             Phase.Moving -> "기록 중$last"
             Phase.Walking -> "걷는 중 · 20초마다 기록$last"
-            Phase.MovingFast -> (if (s.inCar) "내 차로 이동 중" else "이동 중") + " · 10초마다 기록$last"
+            Phase.MovingFast -> if (s.inCar && s.nearParking) "주차했던 곳 근처 · 3초마다 기록$last"
+                else (if (s.inCar) "내 차로 이동 중" else "이동 중") + " · 10초마다 기록$last"
             Phase.Still -> "머무는 중 · 위치 업데이트 쉬는 중$last"
             Phase.Searching -> "위치 신호 찾는 중 · ${retryLabel(s.retryIntervalMs)}마다 시도$last"
             Phase.LocationOff -> "휴대폰 위치 설정이 꺼져 있어요"
@@ -679,6 +709,9 @@ class TrackingService : LifecycleService() {
         const val FAST_INTERVAL_MS = 10_000L
         /** 걷는 중: 20초마다 (걸음 약 25m마다 한 점) */
         const val WALK_INTERVAL_MS = 20_000L
+        /** 내 차로 주차했던 곳 근처: 3초마다 */
+        const val NEAR_PARKING_INTERVAL_MS = 3_000L
+        const val NEAR_PARKING_M = 300f
         const val WALK_BATCH_MS = 60_000L
         const val FAST_BATCH_MS = 60_000L
         const val FAST_ENTER_MPS = 30f / 3.6f
