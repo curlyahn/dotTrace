@@ -115,6 +115,10 @@ class MainActivity : ComponentActivity() {
                             focusTarget = lat to lng
                             route = "map"
                         },
+                        onShowDay = { d ->
+                            vm.selectDate(d)
+                            route = "map"
+                        },
                     )
                     r == "about" -> AboutScreen(onBack = { route = "settings" })
                     else -> MapScreen(

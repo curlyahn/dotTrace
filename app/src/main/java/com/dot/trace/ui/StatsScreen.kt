@@ -38,6 +38,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.material.icons.rounded.CalendarMonth
+import androidx.compose.ui.unit.sp
 import androidx.compose.runtime.remember
 import androidx.compose.foundation.border
 import androidx.compose.ui.draw.clip
@@ -55,7 +57,13 @@ import java.util.Locale
 
 /** 월간·연간 이동 리포트 */
 @Composable
-fun StatsScreen(vm: MainViewModel, initialKey: String?, onBack: () -> Unit, onShowPlace: (Double, Double) -> Unit) {
+fun StatsScreen(
+    vm: MainViewModel,
+    initialKey: String?,
+    onBack: () -> Unit,
+    onShowPlace: (Double, Double) -> Unit,
+    onShowDay: (java.time.LocalDate) -> Unit = {},
+) {
     var key by rememberSaveable { mutableStateOf(initialKey ?: periodKey(defaultPeriod())) }
     val period = parsePeriod(key)
     val report by produceState<Report?>(initialValue = null, key) {
@@ -107,14 +115,14 @@ fun StatsScreen(vm: MainViewModel, initialKey: String?, onBack: () -> Unit, onSh
                 color = Dot.Muted,
                 modifier = Modifier.padding(24.dp),
             )
-            else -> ReportBody(r, onShowPlace)
+            else -> ReportBody(r, onShowPlace, onShowDay)
         }
         Spacer(Modifier.height(32.dp))
     }
 }
 
 @Composable
-private fun ReportBody(r: Report, onShowPlace: (Double, Double) -> Unit) {
+private fun ReportBody(r: Report, onShowPlace: (Double, Double) -> Unit, onShowDay: (java.time.LocalDate) -> Unit) {
     // 요약
     Card {
         Text("총 이동 거리", style = MaterialTheme.typography.labelMedium, color = Dot.Muted)
@@ -131,7 +139,7 @@ private fun ReportBody(r: Report, onShowPlace: (Double, Double) -> Unit) {
     }
 
     // 출퇴근 (A안)
-    CommuteCard(r)
+    CommuteCard(r, onShowDay)
 
     // 이동 수단별
     if (r.modes.isNotEmpty()) {
@@ -303,7 +311,9 @@ fun parsePeriod(key: String): Period = runCatching {
 
 /** 출퇴근 카드: 횟수 · 수단 비율 띠 · 수단별 횟수/비율/평균 시간. [전체·출근·퇴근] */
 @Composable
-private fun CommuteCard(r: Report) {
+private fun CommuteCard(r: Report, onShowDay: (java.time.LocalDate) -> Unit) {
+    var showCal by remember { mutableStateOf(false) }
+    if (showCal) CommuteCalendarSheet(r, onDismiss = { showCal = false }, onShowDay = { showCal = false; onShowDay(it) })
     if (!r.hasHomeWork) {
         Spacer(Modifier.height(16.dp))
         Text(
@@ -327,7 +337,21 @@ private fun CommuteCard(r: Report) {
             .border(1.dp, Dot.Lime.copy(alpha = 0.35f), RoundedCornerShape(24.dp)).padding(16.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("출퇴근", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = Dot.Text, modifier = Modifier.weight(1f))
+            Text("출퇴근", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = Dot.Text)
+            Spacer(Modifier.width(8.dp))
+            // 출퇴근 달력 (날짜별로 탄 수단 확인)
+            Box(
+                Modifier.size(34.dp).clip(RoundedCornerShape(10.dp)).background(Dot.Lime.copy(alpha = 0.12f))
+                    .border(1.dp, Dot.Lime.copy(alpha = 0.6f), RoundedCornerShape(10.dp))
+                    .clickable { showCal = true },
+                contentAlignment = Alignment.Center,
+            ) {
+                androidx.compose.material3.Icon(
+                    androidx.compose.material.icons.Icons.Rounded.CalendarMonth, "출퇴근 달력",
+                    tint = Dot.Lime, modifier = Modifier.size(20.dp),
+                )
+            }
+            Spacer(Modifier.weight(1f))
             listOf("전체", "출근", "퇴근").forEachIndexed { i, t ->
                 val on = i == filter
                 Text(
@@ -393,5 +417,148 @@ private fun CommuteCard(r: Report) {
             style = MaterialTheme.typography.labelSmall,
             color = Dot.Faint,
         )
+    }
+}
+
+/**
+ * 출퇴근 달력: 날짜마다 출근(왼쪽)·퇴근(오른쪽) 막대를 그날 탄 수단 색으로.
+ * 날짜를 누르면 그날 내역, [지도]로 그날 지도.
+ */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
+private fun CommuteCalendarSheet(r: Report, onDismiss: () -> Unit, onShowDay: (java.time.LocalDate) -> Unit) {
+    val zone = java.time.ZoneId.systemDefault()
+    fun dayOf(c: com.dot.trace.stats.Commute) = java.time.Instant.ofEpochMilli(c.start).atZone(zone).toLocalDate()
+    val byDay = remember(r) { r.commutes.groupBy { dayOf(it) } }
+    val firstMonth = java.time.YearMonth.from(r.period.start)
+    val lastMonth = java.time.YearMonth.from(r.period.endExclusive.minusDays(1)).let { m ->
+        val now = java.time.YearMonth.now(); if (m.isAfter(now)) now else m
+    }
+    var month by remember(r) {
+        mutableStateOf(byDay.keys.maxOrNull()?.let { java.time.YearMonth.from(it) } ?: lastMonth)
+    }
+    var picked by remember { mutableStateOf<java.time.LocalDate?>(null) }
+    val fmt = remember { java.text.SimpleDateFormat("HH:mm", Locale.KOREA) }
+    androidx.compose.material3.ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor = Dot.Surface,
+        contentColor = Dot.Text,
+    ) {
+        Column(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 24.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Rounded.CalendarMonth, null, tint = Dot.Lime)
+                Spacer(Modifier.width(8.dp))
+                Text("출퇴근 달력", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = Dot.Text)
+            }
+            // 달 넘기기
+            Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                val canPrev = month.isAfter(firstMonth)
+                val canNext = month.isBefore(lastMonth)
+                Text("‹", fontSize = 26.sp, color = if (canPrev) Dot.Text else Dot.Faint,
+                    modifier = Modifier.clickable(enabled = canPrev) { month = month.minusMonths(1); picked = null }.padding(horizontal = 12.dp))
+                Text("${month.year}년 ${month.monthValue}월", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold,
+                    color = Dot.Text, modifier = Modifier.weight(1f), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                Text("›", fontSize = 26.sp, color = if (canNext) Dot.Text else Dot.Faint,
+                    modifier = Modifier.clickable(enabled = canNext) { month = month.plusMonths(1); picked = null }.padding(horizontal = 12.dp))
+            }
+            // 범례: 이 달 수단별 횟수
+            val inMonth = r.commutes.filter { java.time.YearMonth.from(dayOf(it)) == month }
+            Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.Center) {
+                inMonth.groupBy { it.mode }.entries.sortedByDescending { it.value.size }.forEach { (m, l) ->
+                    Box(Modifier.padding(top = 5.dp).width(12.dp).height(6.dp).clip(RoundedCornerShape(3.dp)).background(ModeStyle.color(m)))
+                    Text(" ${m.label} ${l.size}회   ", style = MaterialTheme.typography.labelSmall, color = Dot.Muted)
+                }
+                if (inMonth.isEmpty()) Text("이 달에는 출퇴근 기록이 없어요", style = MaterialTheme.typography.labelSmall, color = Dot.Muted)
+            }
+            Text(
+                "날짜 아래 막대: 왼쪽 = 출근 · 오른쪽 = 퇴근 (그날 탄 수단 색)",
+                style = MaterialTheme.typography.labelSmall, color = Dot.Faint,
+                modifier = Modifier.fillMaxWidth().padding(top = 2.dp), textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            )
+            Spacer(Modifier.height(10.dp))
+            // 요일 머리
+            Row(Modifier.fillMaxWidth()) {
+                "일월화수목금토".forEachIndexed { i, c ->
+                    Text("$c", style = MaterialTheme.typography.labelSmall, color = if (i == 0) Dot.Coral else Dot.Muted,
+                        modifier = Modifier.weight(1f), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                }
+            }
+            Spacer(Modifier.height(4.dp))
+            val today = java.time.LocalDate.now(zone)
+            val lead = month.atDay(1).dayOfWeek.value % 7 // 일요일 = 0
+            val cells = List(lead) { null } + (1..month.lengthOfMonth()).map { month.atDay(it) }
+            cells.chunked(7).forEach { week ->
+                Row(Modifier.fillMaxWidth().padding(vertical = 2.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    for (i in 0 until 7) {
+                        val d = week.getOrNull(i)
+                        Box(Modifier.weight(1f).height(48.dp)) {
+                            if (d != null) {
+                                val list = byDay[d].orEmpty()
+                                val inC = list.lastOrNull { it.toWork }
+                                val outC = list.lastOrNull { !it.toWork }
+                                val has = list.isNotEmpty()
+                                val future = d.isAfter(today)
+                                Column(
+                                    Modifier.fillMaxSize().clip(RoundedCornerShape(12.dp))
+                                        .background(if (has) Dot.Surface2 else Dot.Surface)
+                                        .border(
+                                            if (picked == d) 2.dp else 1.dp,
+                                            if (picked == d) Dot.Lime else Dot.Surface2,
+                                            RoundedCornerShape(12.dp),
+                                        )
+                                        .clickable(enabled = has) { picked = d },
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.Center,
+                                ) {
+                                    Text("${d.dayOfMonth}", style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = if (has) FontWeight.Bold else FontWeight.Normal,
+                                        color = if (future) Dot.Faint else Dot.Text)
+                                    if (has) {
+                                        Row(Modifier.padding(top = 4.dp).width(30.dp), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                                            listOf(inC, outC).forEach { c ->
+                                                Box(Modifier.weight(1f).height(6.dp).clip(RoundedCornerShape(3.dp))
+                                                    .background(c?.let { ModeStyle.color(it.mode) } ?: Dot.Line))
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            // 고른 날 내역
+            picked?.let { d ->
+                val list = byDay[d].orEmpty().sortedBy { it.start }
+                Spacer(Modifier.height(12.dp))
+                Column(
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Dot.Surface2).padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        d.format(java.time.format.DateTimeFormatter.ofPattern("M월 d일 (E)", Locale.KOREA)),
+                        style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, color = Dot.Text,
+                    )
+                    list.forEach { c ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(if (c.toWork) "출근" else "퇴근", style = MaterialTheme.typography.labelMedium, color = Dot.Muted, modifier = Modifier.width(34.dp))
+                            Box(Modifier.size(8.dp).clip(RoundedCornerShape(2.dp)).background(ModeStyle.color(c.mode)))
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                "${c.mode.label} · ${fmt.format(java.util.Date(c.start))}–${fmt.format(java.util.Date(c.end))} · ${km(c.distanceM)}km" +
+                                    (if (c.stops > 0) " · ${c.stops}곳 들름" else ""),
+                                style = MaterialTheme.typography.bodySmall, color = Dot.Text, modifier = Modifier.weight(1f),
+                            )
+                        }
+                    }
+                    Text(
+                        "지도에서 보기 ›",
+                        style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold, color = Dot.Lime,
+                        modifier = Modifier.align(Alignment.End).clickable { onShowDay(d) }.padding(4.dp),
+                    )
+                }
+            }
+        }
     }
 }
