@@ -39,8 +39,15 @@ object ParkingRepo {
     }
 
     /** 이 기록의 층·위치·와이파이로 다시 추정 (학습 값 반영) */
-    suspend fun estimate(db: AppDatabase, p: ParkingEntity, gpsGoodAfter: Boolean): FloorEstimator.Result? =
-        FloorEstimator.estimate(p.lat, p.lng, p.deltaHpa, p.wifi, gpsGoodAfter, db.analysis().floorCalibs().filter { it.parkingId != p.id })
+    suspend fun estimate(db: AppDatabase, p: ParkingEntity, gpsGoodAfter: Boolean): FloorEstimator.Result? {
+        val places = db.places().all()
+        FloorEstimator.splitPlaces = places.filter { it.splitLevels }
+        return FloorEstimator.estimate(
+            p.lat, p.lng, p.deltaHpa, p.wifi, gpsGoodAfter,
+            db.analysis().floorCalibs().filter { it.parkingId != p.id },
+            split = FloorEstimator.isSplit(p.lat, p.lng, places),
+        )
+    }
 
     /** 하차 알림: "B2에 주차했어요 · 맞아요 / 고치기" */
     fun notifyParked(context: Context, p: ParkingEntity) {
@@ -53,7 +60,7 @@ object ParkingRepo {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
         val floor = p.shownFloor
-        val title = if (floor == null) "주차 위치를 기록했어요" else "${FloorEstimator.longLabel(floor)}에 주차했어요"
+        val title = if (floor == null) "주차 위치를 기록했어요" else "${FloorEstimator.longLabelAt(floor, p.lat, p.lng)}에 주차했어요"
         val text = if (floor == null) "눌러서 층·구역을 남겨 주세요"
         else "${FloorEstimator.sourceLabel(p.floorSource)} · 맞으면 '맞아요', 다르면 눌러서 고쳐 주세요"
         val b = NotificationCompat.Builder(context, TraceApp.CHANNEL_ALERTS)

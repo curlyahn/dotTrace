@@ -20,6 +20,16 @@ import kotlin.math.roundToInt
  */
 object FloorEstimator {
 
+    /**
+     * 반 층 주차장 건물 (내 장소에서 '반 층씩'을 켠 곳). 화면에 층 이름을 보일 때 위치로 찾는다.
+     * 반 층 건물의 층 번호: -1 = B1a, -2 = B1b, -3 = B2a, -4 = B2b …
+     */
+    @Volatile var splitPlaces: List<com.dot.trace.data.PlaceEntity> = emptyList()
+
+    /** 이 위치가 반 층 건물인지 */
+    fun isSplit(lat: Double, lng: Double, places: List<com.dot.trace.data.PlaceEntity> = splitPlaces): Boolean =
+        places.any { it.splitLevels && Geo.distance(lat, lng, it.lat, it.lng) <= maxOf(it.radius, BUILDING_M) }
+
     /** 한 층(약 3m)당 기압 차 (hPa) */
     const val HPA_PER_FLOOR = 0.36f
     /** 같은 건물로 보는 거리 (입구 기준) */
@@ -38,7 +48,10 @@ object FloorEstimator {
         wifi: String?,
         gpsGoodAfter: Boolean,
         calibs: List<FloorCalibEntity>,
+        split: Boolean = false,
     ): Result? {
+        // 반 층 건물은 한 단계가 반 층(약 1.5~1.8m)
+        val perLevel = if (split) HPA_PER_FLOOR / 2 else HPA_PER_FLOOR
         val local = calibs.filter { Geo.distance(lat, lng, it.lat, it.lng) <= BUILDING_M }
 
         // 1) 와이파이 지문
@@ -55,19 +68,19 @@ object FloorEstimator {
 
         if (deltaHpa != null) {
             // 2) 학습한 기압 (층과 기압 차가 맞지 않는 값은 측정이 잘못된 것이라 뺀다)
-            val samples = local.filter { plausible(it) }.mapNotNull { c -> c.deltaHpa?.let { it to c.floor } }
+            val samples = local.filter { plausible(it, split) }.mapNotNull { c -> c.deltaHpa?.let { it to c.floor } }
             if (samples.isNotEmpty()) {
                 val floors = samples.map { it.second }.distinct()
                 if (floors.size >= 2) {
-                    fit(samples)?.let { (a, b) -> return Result((a + b * deltaHpa).roundToInt(), "learned") }
+                    fit(samples, split)?.let { (a, b) -> return Result((a + b * deltaHpa).roundToInt(), "learned") }
                 }
                 // 한 층만 알면: 가장 비슷한 기압 차를 가진 확인 값을 기준으로
                 val (d0, f0) = samples.minBy { abs(it.first - deltaHpa) }
-                return Result(f0 - ((deltaHpa - d0) / HPA_PER_FLOOR).roundToInt(), "learned")
+                return Result(f0 - ((deltaHpa - d0) / perLevel).roundToInt(), "learned")
             }
             // 3) 기본 기압
             if (abs(deltaHpa) < SAME_LEVEL_HPA) return Result(0, "pressure")
-            return Result(-(deltaHpa / HPA_PER_FLOOR).roundToInt(), "pressure")
+            return Result(-(deltaHpa / perLevel).roundToInt(), "pressure")
         }
 
         // 4) 기압 센서 없음
@@ -78,7 +91,7 @@ object FloorEstimator {
      * 최소제곱 직선: 층 = a + b × 기압차.
      * 기울기가 상식 밖(층당 0.2~0.6hPa 밖)이면 쓰지 않는다.
      */
-    private fun fit(samples: List<Pair<Float, Int>>): Pair<Double, Double>? {
+    private fun fit(samples: List<Pair<Float, Int>>, split: Boolean = false): Pair<Double, Double>? {
         val n = samples.size.toDouble()
         val mx = samples.sumOf { it.first.toDouble() } / n
         val my = samples.sumOf { it.second.toDouble() } / n
@@ -87,16 +100,17 @@ object FloorEstimator {
         val sxy = samples.sumOf { (it.first - mx) * (it.second - my) }
         val b = sxy / sxx
         val hpaPerFloor = -1.0 / b
-        if (b >= 0 || hpaPerFloor !in 0.2..0.6) return null
+        val range = if (split) 0.1..0.3 else 0.2..0.6
+        if (b >= 0 || hpaPerFloor !in range) return null
         return (my - b * mx) to b
     }
 
     /** 확인한 층과 그때 기압 차가 상식적으로 맞는지 (층당 0.2~0.6hPa, 지상이면 거의 0) */
-    fun plausible(c: FloorCalibEntity): Boolean {
+    fun plausible(c: FloorCalibEntity, split: Boolean = false): Boolean {
         val d = c.deltaHpa ?: return false
-        if (c.floor == 0) return abs(d) < 0.25f
+        if (c.floor == 0) return abs(d) < (if (split) 0.12f else 0.25f)
         val perFloor = d / -c.floor
-        return perFloor in 0.2f..0.6f
+        return if (split) perFloor in 0.1f..0.3f else perFloor in 0.2f..0.6f
     }
 
     fun bssids(s: String?): Set<String> =
@@ -107,21 +121,30 @@ object FloorEstimator {
         return a.intersect(b).size.toDouble() / a.union(b).size
     }
 
-    /** 층 표시: 지상, B2, 3층 */
-    fun label(floor: Int?): String = when {
+    /** 층 표시: 지상, B2, 3층 (반 층 건물: B1a, B1b, B2a …) */
+    fun label(floor: Int?, split: Boolean = false): String = when {
         floor == null -> "층 모름"
         floor == 0 -> "지상"
+        floor < 0 && split -> splitLabel(-floor)
         floor < 0 -> "B${-floor}"
         else -> "${floor + 1}층"
     }
 
-    /** 긴 표시: 지하 2층, 지상, 3층 */
-    fun longLabel(floor: Int?): String = when {
+    /** 긴 표시: 지하 2층, 지상, 3층 (반 층 건물: 지하 B1a) */
+    fun longLabel(floor: Int?, split: Boolean = false): String = when {
         floor == null -> "층 모름"
         floor == 0 -> "지상"
+        floor < 0 && split -> "지하 ${splitLabel(-floor)}"
         floor < 0 -> "지하 ${-floor}층"
         else -> "${floor + 1}층"
     }
+
+    /** 반 층: 1 → B1a, 2 → B1b, 3 → B2a … */
+    private fun splitLabel(n: Int): String = "B${(n + 1) / 2}${if (n % 2 == 1) "a" else "b"}"
+
+    /** 위치로 반 층 건물인지 보고 표시 */
+    fun labelAt(floor: Int?, lat: Double, lng: Double) = label(floor, isSplit(lat, lng))
+    fun longLabelAt(floor: Int?, lat: Double, lng: Double) = longLabel(floor, isSplit(lat, lng))
 
     fun sourceLabel(source: String?): String = when (source) {
         "wifi" -> "와이파이로 추정"

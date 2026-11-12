@@ -282,6 +282,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    init {
+        // 반 층 주차장 건물 목록 (층 이름 표시용)
+        viewModelScope.launch {
+            app.db.places().observeAll().collect { list -> com.dot.trace.parking.FloorEstimator.splitPlaces = list.filter { it.splitLevels } }
+        }
+    }
+
     val places: StateFlow<List<PlaceEntity>> = app.db.places().observeAll()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 

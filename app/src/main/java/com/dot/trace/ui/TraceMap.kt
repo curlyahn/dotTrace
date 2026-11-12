@@ -300,7 +300,7 @@ fun TraceMap(
         // 내 차 주차: 연두 P + 층·시각
         parkings.forEach { pk ->
             key("parking", pk.id) {
-                val label = com.dot.trace.parking.FloorEstimator.label(pk.shownFloor) + " · " +
+                val label = com.dot.trace.parking.FloorEstimator.labelAt(pk.shownFloor, pk.lat, pk.lng) + " · " +
                     java.text.SimpleDateFormat("HH:mm", java.util.Locale.KOREA).format(java.util.Date(pk.parkedAt))
                 val icon = remember(label, pk.confirmed) { parkingDescriptor(label, d) }
                 Marker(

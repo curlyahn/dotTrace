@@ -86,9 +86,9 @@ fun ParkingBadge(size: Int = 36, filled: Boolean = true) {
 
 /** 층 배지 (확인한 층은 연두, 추정은 회색 테두리) */
 @Composable
-fun FloorChip(floor: Int?, confirmed: Boolean) {
+fun FloorChip(floor: Int?, confirmed: Boolean, split: Boolean = false) {
     Text(
-        FloorEstimator.label(floor),
+        FloorEstimator.label(floor, split),
         style = MaterialTheme.typography.labelMedium,
         fontWeight = FontWeight.Bold,
         color = if (confirmed) Dot.Lime else Dot.Text,
@@ -151,7 +151,7 @@ fun ParkingCard(
                 }
                 Column(horizontalAlignment = Alignment.End) {
                     Text(
-                        FloorEstimator.label(p.shownFloor),
+                        FloorEstimator.labelAt(p.shownFloor, p.lat, p.lng),
                         fontSize = 28.sp,
                         fontWeight = FontWeight.Black,
                         color = if (p.confirmed) Dot.Lime else Dot.Text,
@@ -169,7 +169,7 @@ fun ParkingCard(
                 InfoRow("장소", address ?: "%.5f, %.5f".format(Locale.US, p.lat, p.lng))
                 InfoRow(
                     "층",
-                    FloorEstimator.longLabel(p.shownFloor) + "  " +
+                    FloorEstimator.longLabelAt(p.shownFloor, p.lat, p.lng) + "  " +
                         (if (p.confirmed) "(직접 확인)" else "(${FloorEstimator.sourceLabel(p.floorSource)})"),
                 )
                 p.entryAt?.let { InfoRow("입구", "정확한 GPS ${fmt.format(Date(it))} · 진입 후 ${durationText((p.parkedAt - it).coerceAtLeast(0))}") }
@@ -189,7 +189,7 @@ fun ParkingCard(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        "${FloorEstimator.longLabel(p.floorEst)} 맞나요? 확인하면 이 건물의 층을 배워요",
+                        "${FloorEstimator.longLabelAt(p.floorEst, p.lat, p.lng)} 맞나요? 확인하면 이 건물의 층을 배워요",
                         style = MaterialTheme.typography.bodySmall,
                         color = Dot.Text,
                         modifier = Modifier.weight(1f),
@@ -295,6 +295,7 @@ fun ParkingPhotoDialog(name: String, onDismiss: () -> Unit) {
 @Composable
 fun FloorZoneDialog(p: ParkingEntity, onDismiss: () -> Unit, onSave: (floor: Int?, zone: String) -> Unit) {
     var floor by remember { mutableStateOf(p.shownFloor) }
+    val split = FloorEstimator.isSplit(p.lat, p.lng)
     var zone by remember { mutableStateOf(p.zone ?: "") }
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -308,10 +309,11 @@ fun FloorZoneDialog(p: ParkingEntity, onDismiss: () -> Unit, onSave: (floor: Int
                 )
                 Spacer(Modifier.height(12.dp))
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    (-6..4).forEach { f ->
+                    // 반 층 건물: B3b(-6) ~ 지상, 그 밖: B6 ~ 5층
+                    (if (split) (-6..2) else (-6..4)).forEach { f ->
                         val on = f == floor
                         Text(
-                            FloorEstimator.label(f),
+                            FloorEstimator.label(f, split),
                             style = MaterialTheme.typography.labelLarge,
                             fontWeight = FontWeight.Bold,
                             color = if (on) Dot.Ink else Dot.Text,
@@ -369,7 +371,7 @@ fun ParkingEventRow(p: ParkingEntity, alight: Boolean, time: Long, onClick: () -
                 )
                 Text(address ?: "주차 위치", style = MaterialTheme.typography.labelSmall, color = Dot.Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            FloorChip(p.shownFloor, p.confirmed)
+            FloorChip(p.shownFloor, p.confirmed, FloorEstimator.isSplit(p.lat, p.lng))
             if (alight && !p.zone.isNullOrBlank()) {
                 Spacer(Modifier.width(6.dp))
                 Text(p.zone, style = MaterialTheme.typography.labelSmall, color = Dot.Muted)

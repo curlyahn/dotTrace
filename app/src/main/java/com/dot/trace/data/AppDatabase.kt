@@ -100,6 +100,8 @@ data class PlaceEntity(
     val lng: Double,
     /** 이 반경(m) 안에 있으면 이 장소에 있는 것으로 본다 */
     @ColumnInfo(defaultValue = "150") val radius: Float = 150f,
+    /** 주차장이 반 층씩 내려가는 건물 (B1a, B1b, B2a …) */
+    @ColumnInfo(defaultValue = "0") val splitLevels: Boolean = false,
 ) {
     companion object {
         const val HOME = "home"
@@ -380,7 +382,7 @@ interface AnalysisDao {
 
 @Database(
     entities = [PointEntity::class, PlaceEntity::class, OverrideEntity::class, ModeRuleEntity::class, PoiNameEntity::class, DayCacheEntity::class, ModeSpanEntity::class, ParkingEntity::class, FloorCalibEntity::class, FrozenDayEntity::class],
-    version = 11,
+    version = 12,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -393,7 +395,7 @@ abstract class AppDatabase : RoomDatabase() {
 
         fun get(context: Context): AppDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(context.applicationContext, AppDatabase::class.java, "dottrace.db")
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12)
                 .build()
                 .also { instance = it }
         }
@@ -511,6 +513,13 @@ abstract class AppDatabase : RoomDatabase() {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE parkings ADD COLUMN entrySamples INTEGER")
                 db.execSQL("ALTER TABLE parkings ADD COLUMN parkSamples INTEGER")
+            }
+        }
+
+        /** 반 층 주차장 */
+        private val MIGRATION_11_12 = object : Migration(11, 12) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE places ADD COLUMN splitLevels INTEGER NOT NULL DEFAULT 0")
             }
         }
     }

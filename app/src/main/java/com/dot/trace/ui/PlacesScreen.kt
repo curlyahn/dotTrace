@@ -189,6 +189,7 @@ fun PlaceEditScreen(vm: MainViewModel, kind: String, id: Long?, onBack: () -> Un
     var existing by remember { mutableStateOf<PlaceEntity?>(null) }
     var loaded by remember { mutableStateOf(false) }
     var name by remember { mutableStateOf(defaultName(kind)) }
+    var split by remember(existing) { mutableStateOf(existing?.splitLevels ?: false) }
     var center by remember { mutableStateOf<LatLng?>(null) }
     var mapReady by remember { mutableStateOf(false) }
     var locating by remember { mutableStateOf(false) }
@@ -371,6 +372,24 @@ fun PlaceEditScreen(vm: MainViewModel, kind: String, id: Long?, onBack: () -> Un
                             cursorColor = Dot.Lime,
                         ),
                     )
+                    // 주차장 층 구조
+                    if (kind != PlaceEntity.LABEL) {
+                        Row(
+                            Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).clickable { split = !split }
+                                .background(Dot.Surface2).padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text("주차장이 반 층씩 내려가요", style = MaterialTheme.typography.bodyMedium, color = Dot.Text)
+                                Text("B1a · B1b · B2a · B2b … 로 표시하고 층을 추정해요", style = MaterialTheme.typography.labelSmall, color = Dot.Muted)
+                            }
+                            androidx.compose.material3.Switch(
+                                checked = split,
+                                onCheckedChange = { split = it },
+                                colors = androidx.compose.material3.SwitchDefaults.colors(checkedThumbColor = Dot.OnLime, checkedTrackColor = Dot.Lime),
+                            )
+                        }
+                    }
                     val c = center
                     Text(
                         c?.let { rememberAddress(it.latitude, it.longitude) } ?: "위치를 고르는 중…",
@@ -399,6 +418,7 @@ fun PlaceEditScreen(vm: MainViewModel, kind: String, id: Long?, onBack: () -> Un
                                         lat = target.latitude,
                                         lng = target.longitude,
                                         radius = existing?.radius ?: 150f,
+                                        splitLevels = split,
                                     )
                                 )
                                 Toast.makeText(context, "저장했어요", Toast.LENGTH_SHORT).show()
