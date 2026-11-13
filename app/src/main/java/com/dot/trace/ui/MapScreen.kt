@@ -39,6 +39,7 @@ import androidx.compose.material.icons.rounded.BarChart
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Timeline
+import androidx.compose.material.icons.rounded.Sell
 import androidx.compose.material.icons.rounded.Remove
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.MyLocation
@@ -406,6 +407,20 @@ fun MapScreen(
             Modifier.align(Alignment.BottomCenter).fillMaxWidth().navigationBarsPadding().padding(16.dp),
             horizontalAlignment = Alignment.End,
         ) {
+            // 태그(캐리어·가방) 위치: 구글 내 기기 찾기(Find Hub) 앱 열기
+            Surface(
+                onClick = { openFindHub(context) },
+                modifier = Modifier.size(48.dp),
+                shape = RoundedCornerShape(16.dp),
+                color = Dot.Surface.copy(alpha = panelAlpha),
+                border = androidx.compose.foundation.BorderStroke(1.5.dp, Dot.Lime.copy(alpha = 0.55f)),
+                shadowElevation = if (panelAlpha > 0.9f) 6.dp else 0.dp,
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(Icons.Rounded.Sell, contentDescription = "태그 보기 (내 기기 찾기)", tint = Dot.Lime, modifier = Modifier.size(22.dp))
+                }
+            }
+            Spacer(Modifier.height(10.dp))
             // 지금 주차 중이면 '내 차' 버튼
             currentParking?.let { cp ->
                 MyCarButton(alpha = panelAlpha) {
@@ -1075,4 +1090,16 @@ private fun distanceKm(points: List<PointEntity>): Double {
         }
     }
     return total / 1000.0
+}
+
+/** 구글 내 기기 찾기(Find Hub) 앱을 연다. 앱이 없으면 웹 페이지로 */
+private fun openFindHub(context: android.content.Context) {
+    val app = context.packageManager.getLaunchIntentForPackage("com.google.android.apps.adm")
+    val ok = app != null && runCatching { context.startActivity(app.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)) }.isSuccess
+    if (!ok) runCatching {
+        context.startActivity(
+            android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse("https://www.google.com/android/find"))
+                .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        )
+    }
 }
