@@ -440,9 +440,10 @@ class TrackingService : LifecycleService() {
 
         val speed = estimateSpeed(prevSaved, toSave)
         when (mode) {
-            Mode.Retry -> applyMode(if (speed >= FAST_ENTER_MPS && intervalMs > FAST_INTERVAL_MS) Mode.Fast else baseMode())
+            // 신호를 다시 잡음: 내 차에 타 있으면 속도와 상관없이 차 주기로 (주차장을 막 빠져나와 느릴 때도)
+            Mode.Retry -> applyMode(if ((carConnected || speed >= FAST_ENTER_MPS) && intervalMs > FAST_INTERVAL_MS) Mode.Fast else baseMode())
             Mode.Normal, Mode.Walk -> {
-                if (speed >= FAST_ENTER_MPS && intervalMs > FAST_INTERVAL_MS) applyMode(Mode.Fast)
+                if ((carConnected || speed >= FAST_ENTER_MPS) && intervalMs > FAST_INTERVAL_MS) applyMode(Mode.Fast)
                 else detectStill(toSave)
             }
             Mode.Fast -> {
@@ -545,6 +546,9 @@ class TrackingService : LifecycleService() {
                     else -> intervalMs * 2
                 }
                 val waited = now - maxOf(lastAcceptedAt, modeSince)
+                // 내 차에 타 있는 동안(지하 주차장 등)은 재시도로 바꾸지 않고 차 주기 그대로 계속 요청한다.
+                // 재시도로 바뀌면 신호를 다시 잡았을 때 느린 주기로 떨어져 짧은 이동을 놓친다.
+                if (carConnected && mode == Mode.Fast) return
                 if (waited > expected + intervalFor(mode) + 15_000L) applyMode(Mode.Retry)
             }
             Mode.Retry -> {
