@@ -191,27 +191,52 @@ object DayAnalyzer {
 
     private fun modeOf(name: String): TransportMode? = runCatching { TransportMode.valueOf(name) }.getOrNull()
 
+    /**
+     * 내 차 블루투스를 등록해 쓰고 있는지 (앱 시작 때 설정에서 읽어 둔다).
+     * 등록돼 있으면 "차량 이동인데 내 차와 연결된 적이 없다 = 내 차가 아니다"라는 강한 단서가 된다.
+     */
+    @Volatile var carBtKnown: Boolean = false
+
+    /** 내 차가 아닌 차량 이동이 알려 준 버스 경로와 이만큼 겹치면 버스 */
+    private const val BUS_OVERLAP_NOT_MY_CAR = 0.6
+
+    /**
+     * 고쳐서 알려 준 경로들로 수단 정하기.
+     * - 같은 수단으로 알려 준 경로는 모두 합쳐서(여러 번 알려 줄수록 넓게) 겹치는 비율을 본다
+     * - 내 차 블루투스에 연결된 이동은 버스로 바꾸지 않는다
+     * - 내 차가 아닌 차량 이동(블루투스 등록됨 + 연결 없음)이 버스 경로와 60% 이상 겹치면 버스
+     *   (자가용으로 판단했더라도 바꾼다. 타고 내린 곳이 달라도 된다)
+     * - 내 차 블루투스를 안 쓰면 예전처럼 엄격하게: 같은 정류장 + 80% 겹침
+     */
     private fun routeMode(seg: Segment, c: Corrections): TransportMode? {
         if (c.routes.isEmpty() || seg.distanceM < RouteMatcher.MIN_LENGTH_M || seg.points.size < 2) return null
         val hours = seg.durationMs / 3_600_000.0
         val kmh = if (hours > 0) seg.distanceM / 1000 / hours else 0.0
         val path = RouteMatcher.simplify(seg.points)
         val carShare = seg.points.count { it.activity == ActivityCode.CAR }.toDouble() / seg.points.size
-        return c.routes.asSequence()
-            .mapNotNull { (rule, learned) ->
-                val m = modeOf(rule.mode) ?: return@mapNotNull null
-                if (!RouteMatcher.speedFits(m, kmh)) return@mapNotNull null
-                // 버스는 같은 길을 자가용으로도 다니므로 더 엄격하게:
-                // 내 차 블루투스로 자동차라고 확실하면 제외, 그리고 기억한 노선과 같은 정류장(500m 안)에서 타고 내렸을 때만
-                if (m == TransportMode.Bus) {
-                    if (carShare >= 0.5) return@mapNotNull null
-                    if (!sameStops(seg, rule)) return@mapNotNull null
-                }
-                m to RouteMatcher.overlap(path, learned)
+        val notMyCar = carBtKnown && carShare == 0.0
+
+        data class Hit(val mode: TransportMode, val score: Double, val newest: Long)
+        val hits = c.routes.groupBy { it.first.mode }.mapNotNull { (name, list) ->
+            val m = modeOf(name) ?: return@mapNotNull null
+            if (!RouteMatcher.speedFits(m, kmh)) return@mapNotNull null
+            var cands = list
+            var need = RouteMatcher.MIN_OVERLAP
+            if (m == TransportMode.Bus) {
+                if (carShare >= 0.5) return@mapNotNull null
+                if (notMyCar) need = BUS_OVERLAP_NOT_MY_CAR
+                else cands = list.filter { sameStops(seg, it.first) }
             }
-            .filter { it.second >= RouteMatcher.MIN_OVERLAP }
-            .maxByOrNull { it.second }
-            ?.first
+            if (cands.isEmpty()) return@mapNotNull null
+            val score = RouteMatcher.overlapAny(path, cands.map { it.second })
+            if (score >= need) Hit(m, score, cands.maxOf { it.first.id }) else null
+        }
+        if (hits.isEmpty()) return null
+        // 내 차가 아니면 '자가용'으로 기억한 경로보다 다른 수단(버스 등)을 먼저
+        val pool = if (notMyCar) hits.filter { it.mode != TransportMode.Car }.ifEmpty { hits } else hits
+        val best = pool.maxOf { it.score }
+        // 비슷하게 겹치면 가장 최근에 알려 준 것
+        return pool.filter { best - it.score <= 0.05 }.maxByOrNull { it.newest }?.mode
     }
 
     /** 기억한 이동과 같은 곳에서 타고 내렸는지 (반대 방향 포함, 500m 안) */

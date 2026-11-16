@@ -59,6 +59,14 @@ object RouteMatcher {
         return near.toDouble() / move.size
     }
 
+    /** 이동 경로 중 학습한 경로들 가운데 어느 하나 위(NEAR_M 안)에 있는 점의 비율 — 여러 번 알려 준 경로를 합쳐서 본다 */
+    fun overlapAny(move: List<LL>, learned: List<List<LL>>): Double {
+        val paths = learned.filter { it.size >= 2 }
+        if (move.isEmpty() || paths.isEmpty()) return 0.0
+        val near = move.count { p -> paths.any { distanceToPath(p, it) <= NEAR_M } }
+        return near.toDouble() / move.size
+    }
+
     /** 이 수단으로 보기에 속도가 그럴듯한지 (같은 길을 걸을 때 버스로 보지 않게) */
     fun speedFits(mode: TransportMode, kmh: Double): Boolean = when (mode) {
         TransportMode.Walk -> kmh < 9

@@ -5,6 +5,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import com.dot.trace.data.AppDatabase
 import com.dot.trace.data.Prefs
+import kotlinx.coroutines.launch
 
 class TraceApp : Application() {
 
@@ -25,6 +26,10 @@ class TraceApp : Application() {
                 description = "월간·연간 리포트, 재부팅 후 기록을 다시 시작해야 할 때 등"
             }
         )
+        // 내 차 블루투스를 쓰는지 (이동 수단 판단에 쓴다: 내 차가 아닌 차량 이동 → 알려 준 버스 경로)
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Default).launch {
+            prefs.settings.collect { com.dot.trace.trips.DayAnalyzer.carBtKnown = it.carDevices.isNotEmpty() }
+        }
         // 매월·매년 리포트 알림 예약
         com.dot.trace.stats.ReportWorker.schedule(this)
     }

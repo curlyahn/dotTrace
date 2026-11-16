@@ -98,6 +98,10 @@ class Prefs(context: Context) {
     suspend fun setCarDevices(list: List<com.dot.trace.tracking.BtDevice>) =
         ds.edit { it[K.carDevices] = list.map { d -> "${d.address}|${d.name}" }.toSet() }
 
+    /** 한 번만 하는 작업을 했는지 */
+    suspend fun flag(name: String): Boolean = ds.data.first()[booleanPreferencesKey("flag_$name")] ?: false
+    suspend fun setFlag(name: String) { ds.edit { it[booleanPreferencesKey("flag_$name")] = true } }
+
     suspend fun setPanelAlpha(a: Float) = ds.edit { it[K.panelAlpha] = a.coerceIn(Settings.MIN_PANEL_ALPHA, 1f) }
 
     suspend fun setGooglePlaces(on: Boolean) = ds.edit { it[K.googlePlaces] = on }

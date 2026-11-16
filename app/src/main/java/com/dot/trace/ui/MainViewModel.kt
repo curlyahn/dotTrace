@@ -178,22 +178,57 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      * 같은 길(버스 노선 등)이면 다음에 타고 내린 곳이 달라도 알아본다.
      * 같은 경로를 예전에 다른 수단으로 기억했으면 새것으로 바꾼다.
      */
-    private suspend fun learnRoute(points: List<PointEntity>, mode: TransportMode) {
+    private suspend fun learnRoute(points: List<PointEntity>, mode: TransportMode, replaceOthers: Boolean = true) {
         if (points.size < 2) return
         val rm = com.dot.trace.trips.RouteMatcher
         val simple = rm.simplify(points).takeIf { it.size >= 2 } ?: return
         val a = points.first(); val b = points.last()
+        var known = false
         for (old in analysis.rules()) {
             val oldPath = rm.decode(old.path)
             val samePath = oldPath.size >= 2 &&
                 rm.overlap(simple, oldPath) >= rm.MIN_OVERLAP && rm.overlap(oldPath, simple) >= rm.MIN_OVERLAP
             val sameEnds = com.dot.trace.data.Geo.distance(a.lat, a.lng, old.startLat, old.startLng) <= DayAnalyzer.RULE_RADIUS_M &&
                 com.dot.trace.data.Geo.distance(b.lat, b.lng, old.endLat, old.endLng) <= DayAnalyzer.RULE_RADIUS_M
-            if (samePath || sameEnds) analysis.deleteRule(old.id)
+            if (old.mode == mode.name) {
+                // 같은 수단으로 이미 알고 있는 같은 경로면 다시 넣지 않는다. 조금 다른 경로는 함께 쌓아 둔다
+                if (samePath) known = true
+            } else if (replaceOthers && (samePath || sameEnds)) {
+                // 같은 경로를 다른 수단으로 기억하고 있었으면 방금 고친 것으로 바꾼다
+                analysis.deleteRule(old.id)
+            }
         }
+        if (known) return
         analysis.insertRule(
             ModeRuleEntity(startLat = a.lat, startLng = a.lng, endLat = b.lat, endLng = b.lng, mode = mode.name, path = rm.encode(simple))
         )
+    }
+
+    /**
+     * 예전에 고친 이동(구간 수단 고치기, 탑승~하차·점 지정)을 모두 경로 학습에 넣는다 (한 번만).
+     * '다음에도'를 켜지 않고 고쳤거나 점으로 고친 것도 배우게 된다. 지난 기록 자체는 바꾸지 않는다.
+     */
+    private suspend fun relearnFromPastCorrections() = withContext(Dispatchers.IO) {
+        if (app.prefs.flag("relearn_v1")) return@withContext
+        data class Fix(val start: Long, val end: Long, val mode: TransportMode)
+        val fixes = analysis.overridesBetween(0L, Long.MAX_VALUE).mapNotNull { o ->
+            o.mode?.let { runCatching { TransportMode.valueOf(it) }.getOrNull() }?.let { Fix(o.start, o.end, it) }
+        } + analysis.spansBetween(0L, Long.MAX_VALUE).mapNotNull { sp ->
+            runCatching { TransportMode.valueOf(sp.mode) }.getOrNull()?.let { Fix(sp.start, sp.end, it) }
+        }
+        for (f in fixes.sortedBy { it.start }) {
+            if (f.mode == TransportMode.Walk || f.mode == TransportMode.Unknown) continue
+            val pts = com.dot.trace.trips.PathCleaner.clean(dao.between(f.start, f.end))
+            if (pts.size < 3) continue
+            val dist = pts.zipWithNext { p, q -> com.dot.trace.data.Geo.distance(p.lat, p.lng, q.lat, q.lng).toDouble() }.sum()
+            if (dist < com.dot.trace.trips.RouteMatcher.MIN_LENGTH_M) continue
+            learnRoute(pts, f.mode, replaceOthers = false)
+        }
+        app.prefs.setFlag("relearn_v1")
+    }
+
+    init {
+        viewModelScope.launch { runCatching { relearnFromPastCorrections() } }
     }
 
     // ── 지도에서 탑승(A) → 하차(B) ──
