@@ -243,7 +243,12 @@ fun ParkingCard(
                     p.deltaHpa?.let { Text("① 들어갈 때: 입구 → 주차 자리 %+.2f hPa".format(Locale.US, it), style = MaterialTheme.typography.labelSmall, color = Dot.Text) }
                     Text("② 나올 때: 주차 자리 → 지상 %+.2f hPa".format(Locale.US, -exitDelta), style = MaterialTheme.typography.labelSmall, color = Dot.Text)
                 }
-            } else if (p.leftAt == null && now - p.parkedAt < 15 * 60_000L) {
+            } else if (p.exitHpa != null && p.entryHpa != null) {
+                Text(
+                    "검증 생략 · GPS가 지상이 아닌 곳(테라스·높은 층 등)에서 잡혀서 나올 때 기압은 쓰지 않았어요",
+                    style = MaterialTheme.typography.labelSmall, color = Dot.Muted,
+                )
+            } else if (p.exitHpa == null && p.leftAt == null && now - p.parkedAt < 15 * 60_000L) {
                 Column(
                     Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Dot.Surface2).padding(horizontal = 12.dp, vertical = 10.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp),

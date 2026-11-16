@@ -151,6 +151,7 @@ object FloorEstimator {
         "learned" -> "이 건물 기록으로 보정"
         "pressure" -> "기압으로 추정"
         "gps" -> "GPS로 추정"
+        "exit" -> "나올 때 기압으로 추정 (정확도 낮음)"
         else -> "추정"
     }
 }

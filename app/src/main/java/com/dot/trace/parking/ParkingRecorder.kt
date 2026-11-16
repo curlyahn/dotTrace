@@ -47,6 +47,11 @@ class ParkingRecorder(
     private var connected = false
     private var exitDone = false
 
+    private companion object {
+        /** 나온 곳이 입구와 같은 높이(지상)라고 보는 기압 차 (약 ±1.5m) */
+        const val SAME_GROUND_HPA = 0.18f
+    }
+
     fun onConnected() {
         connected = true
         disconnectAt = 0L
@@ -137,7 +142,19 @@ class ParkingRecorder(
         val p = a.openParking()?.takeIf { abs(it.parkedAt - at) < 5_000L } ?: return@launch
         val park = p.parkHpa ?: return@launch
         val est = ParkingRepo.estimateFromDelta(app.db, p, park - exitHpa)
-        a.updateParking(p.copy(exitAt = fix.time, exitHpa = exitHpa, floorExit = est?.floor))
+        val entry = p.entryHpa
+        val updated = when {
+            // 입구 기압이 없었으면(측정 부족): 나올 때 값이 유일한 단서 → 추정으로만 쓴다 (지상이 아닐 수 있어 정확도 낮음)
+            entry == null ->
+                if (p.floor == null && est != null && p.floorSource != "wifi" && p.floorSource != "learned")
+                    p.copy(exitAt = fix.time, exitHpa = exitHpa, floorEst = est.floor, floorSource = "exit")
+                else p.copy(exitAt = fix.time, exitHpa = exitHpa)
+            // 나온 곳 기압이 입구(지상)와 거의 같을 때만 검증으로 인정
+            abs(exitHpa - entry) <= SAME_GROUND_HPA -> p.copy(exitAt = fix.time, exitHpa = exitHpa, floorExit = est?.floor)
+            // 다르면 지상이 아닌 곳(테라스·옥상·높은 층)에서 GPS가 잡힌 것 → 검증하지 않는다
+            else -> p.copy(exitAt = fix.time, exitHpa = exitHpa, floorExit = null)
+        }
+        a.updateParking(updated)
         if (!connected && disconnectAt == at) stopBaro()
     }
 
