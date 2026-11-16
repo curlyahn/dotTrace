@@ -71,6 +71,28 @@ import java.util.Locale
 /** 주차 사진이 저장되는 폴더 (앱 안, 백업·공유 안 됨) */
 fun parkingPhotoDir(context: Context): File = File(context.filesDir, "parking").apply { mkdirs() }
 
+/** 주차 시각: 오늘이면 "14:32", 다른 날이면 "11월 14일 (토) 14:32" */
+fun parkedWhen(t: Long): String {
+    val zone = java.time.ZoneId.systemDefault()
+    val d = java.time.Instant.ofEpochMilli(t).atZone(zone)
+    val pattern = if (d.toLocalDate() == java.time.LocalDate.now(zone)) "HH:mm" else "M월 d일 (E) HH:mm"
+    return d.format(java.time.format.DateTimeFormatter.ofPattern(pattern, Locale.KOREA))
+}
+
+/** 지도 핀용 짧은 표시: 오늘이면 "14:32", 다른 날이면 "11/14" */
+fun parkedWhenShort(t: Long): String {
+    val zone = java.time.ZoneId.systemDefault()
+    val d = java.time.Instant.ofEpochMilli(t).atZone(zone)
+    val pattern = if (d.toLocalDate() == java.time.LocalDate.now(zone)) "HH:mm" else "M/d"
+    return d.format(java.time.format.DateTimeFormatter.ofPattern(pattern, Locale.KOREA))
+}
+
+/** 며칠씩 세워 둔 경우: "2일 5시간" */
+fun longDuration(ms: Long): String {
+    val h = ms / 3_600_000L
+    return if (h >= 24) "${h / 24}일" + (if (h % 24 > 0) " ${h % 24}시간" else "") else durationText(ms)
+}
+
 /** 연두 P 배지 */
 @Composable
 fun ParkingBadge(size: Int = 36, filled: Boolean = true) {
@@ -146,8 +168,8 @@ fun ParkingCard(
                         color = Dot.Text,
                     )
                     Text(
-                        "${fmt.format(Date(p.parkedAt))} 하차 · " +
-                            (if (p.leftAt == null) "${durationText(parkedFor)}째" else "${fmt.format(Date(p.leftAt))} 승차 · ${durationText(parkedFor)}"),
+                        "${parkedWhen(p.parkedAt)} 하차 · " +
+                            (if (p.leftAt == null) "${longDuration(parkedFor)}째" else "${parkedWhen(p.leftAt)} 승차 · ${longDuration(parkedFor)}"),
                         style = MaterialTheme.typography.bodySmall,
                         color = Dot.Muted,
                     )
