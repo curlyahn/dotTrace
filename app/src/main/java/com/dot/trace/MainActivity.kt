@@ -155,6 +155,9 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         permTick++
+        // 차에서 내린 직후 루틴으로 열린 경우: 가장 먼저 지점 기록, 그다음 주차 카드
+        if (Tracker.status.value.running) TrackingService.captureIfJustParked(this)
+        vm.checkRecentParking()
         vm.checkPendingReport()
         vm.checkSuggestions()
         // 기록을 켜 두었는데 서비스가 멈춰 있으면(재부팅, 강제 종료 등) 앱을 열 때 이어서 기록

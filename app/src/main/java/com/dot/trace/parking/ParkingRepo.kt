@@ -49,6 +49,56 @@ object ParkingRepo {
         )
     }
 
+    /** 나올 때 기압 차(주차 자리 − 지상)만으로 층을 다시 계산 (와이파이는 쓰지 않아 독립된 검증) */
+    suspend fun estimateFromDelta(db: AppDatabase, p: ParkingEntity, delta: Float): FloorEstimator.Result? {
+        val places = db.places().all()
+        return FloorEstimator.estimate(
+            p.lat, p.lng, delta, null, false,
+            db.analysis().floorCalibs().filter { it.parkingId != p.id },
+            split = FloorEstimator.isSplit(p.lat, p.lng, places),
+        )
+    }
+
+    /**
+     * 주차 자리에서 와이파이를 새로 검색해 지문을 바꿔 저장한다.
+     * (앱이 화면에 떠 있을 때만 새 검색이 허용된다. 실패하면 예전 값을 그대로 둔다)
+     */
+    @Suppress("DEPRECATION")
+    suspend fun refreshWifi(context: Context, db: AppDatabase, id: Long) {
+        val wm = context.applicationContext.getSystemService(android.net.wifi.WifiManager::class.java) ?: return
+        val got = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(c: Context, i: Intent) { got.complete(Unit) }
+        }
+        val app = context.applicationContext
+        runCatching {
+            androidx.core.content.ContextCompat.registerReceiver(
+                app, receiver, android.content.IntentFilter(android.net.wifi.WifiManager.SCAN_RESULTS_AVAILABLE_ACTION),
+                androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED,
+            )
+        }
+        val started = runCatching { wm.startScan() }.getOrDefault(false)
+        if (started) kotlinx.coroutines.withTimeoutOrNull(8_000L) { got.await() }
+        runCatching { app.unregisterReceiver(receiver) }
+        val nowUs = android.os.SystemClock.elapsedRealtime() * 1000
+        val fresh = runCatching {
+            wm.scanResults.filter { nowUs - it.timestamp < 20_000_000L }.sortedByDescending { it.level }.take(10)
+        }.getOrDefault(emptyList())
+        if (fresh.isEmpty()) return
+        val a = db.analysis()
+        val p = a.parking(id) ?: return
+        var updated = p.copy(wifi = fresh.joinToString(",") { it.BSSID }, wifiScanned = fresh.size)
+        val confirmed = p.floor
+        if (confirmed == null) {
+            // 아직 확인 전이면 새 지문으로 다시 추정
+            estimate(db, updated, gpsGoodAfter = false)?.let { updated = updated.copy(floorEst = it.floor, floorSource = it.source) }
+            a.updateParking(updated)
+        } else {
+            a.updateParking(updated)
+            setFloor(db, id, confirmed) // 학습 값의 와이파이도 새 지문으로
+        }
+    }
+
     /** 하차 알림: "B2에 주차했어요 · 맞아요 / 고치기" */
     fun notifyParked(context: Context, p: ParkingEntity) {
         val open = PendingIntent.getActivity(

@@ -9,6 +9,8 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- OS가 이미 해 둔 와이파이 검색 결과만 읽는다 (새로 검색하지 않음): 함께 이동하는 와이파이로 대중교통 판별 -->
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <!-- 주차 자리에서 와이파이 새로 검색 (층 학습용 지문) -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
 
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />

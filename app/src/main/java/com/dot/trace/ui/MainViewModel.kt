@@ -262,6 +262,31 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun selectParking(id: Long?) { _selectedParkingId.value = id }
 
+    private var autoShownParking = -1L
+
+    /**
+     * 방금(3분 안) 주차했고 아직 층을 확인하지 않았으면 주차 카드를 자동으로 띄우고,
+     * 주차 자리에서 와이파이를 새로 검색해 저장한다.
+     */
+    fun checkRecentParking() = viewModelScope.launch {
+        val p = analysis.openParking() ?: return@launch
+        if (p.id == autoShownParking || System.currentTimeMillis() - p.parkedAt > 3 * 60_000L) return@launch
+        autoShownParking = p.id
+        if (p.floor == null) _selectedParkingId.value = p.id
+        com.dot.trace.parking.ParkingRepo.refreshWifi(app, app.db, p.id)
+    }
+
+    init {
+        // 앱이 먼저 열리고 주차 기록이 몇 초 뒤 만들어지는 경우
+        viewModelScope.launch { parkings.collect { if (it.any { p -> p.leftAt == null }) checkRecentParking() } }
+    }
+
+    /** 층 버튼을 눌러 확인: 저장하고 이 건물 값으로 학습 */
+    fun pickFloor(p: com.dot.trace.data.ParkingEntity, floor: Int) = viewModelScope.launch {
+        com.dot.trace.parking.ParkingRepo.setFloor(app.db, p.id, floor)
+        com.dot.trace.parking.ParkingRepo.cancelNotification(app)
+    }
+
     /** 추정한 층이 맞다: 확인으로 저장하고 이 건물 값으로 학습 */
     fun confirmFloor(p: com.dot.trace.data.ParkingEntity) = viewModelScope.launch {
         p.floorEst?.let { com.dot.trace.parking.ParkingRepo.setFloor(app.db, p.id, it) }

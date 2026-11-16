@@ -45,6 +45,7 @@ class ParkingRecorder(
     private var disconnectAt = 0L
     private var afterFix: Location? = null
     private var connected = false
+    private var exitDone = false
 
     fun onConnected() {
         connected = true
@@ -66,6 +67,7 @@ class ParkingRecorder(
         connected = false
         disconnectAt = System.currentTimeMillis()
         afterFix = null
+        exitDone = false
         val at = disconnectAt
         val wifi = wifiFingerprint()
         runCatching(flush)
@@ -115,8 +117,28 @@ class ParkingRecorder(
                     ParkingRepo.notifyParked(context, updated)
                 }
             }
-            if (!connected) stopBaro()
+            // 걸어 나가는 동안 기압 검증을 위해 최대 15분까지 기압계를 켜 둔다
+            delay(14 * 60_000L)
+            if (!connected && disconnectAt == at) stopBaro()
         }
+    }
+
+    /**
+     * 나올 때 검증: 하차 후 처음으로 정확한 GPS가 잡힌 곳(지상)의 기압과 주차 자리 기압의 차로 층을 한 번 더 계산.
+     * 들어갈 때(입구 → 주차 자리) 추정과 독립된 측정이라 서로 비교할 수 있다.
+     */
+    private fun verifyExit(fix: Location, at: Long) = scope.launch {
+        runCatching { sm?.flush(this@ParkingRecorder) }
+        delay(1_500)
+        val win = history.filter { it.first in (fix.time - 12_000L)..(fix.time + 3_000L) }.map { it.second }
+        if (win.size < 3) return@launch
+        val exitHpa = median(win)
+        val a = app.db.analysis()
+        val p = a.openParking()?.takeIf { abs(it.parkedAt - at) < 5_000L } ?: return@launch
+        val park = p.parkHpa ?: return@launch
+        val est = ParkingRepo.estimateFromDelta(app.db, p, park - exitHpa)
+        a.updateParking(p.copy(exitAt = fix.time, exitHpa = exitHpa, floorExit = est?.floor))
+        if (!connected && disconnectAt == at) stopBaro()
     }
 
     /** 기록 서비스가 받은 위치를 모두 넘겨받는다 */
@@ -129,6 +151,12 @@ class ParkingRecorder(
             }
             if (disconnectAt > 0 && l.time > disconnectAt && l.time - disconnectAt < 90_000L && l.accuracy <= 15f && afterFix == null) {
                 afterFix = l
+            }
+            if (!exitDone && !connected && disconnectAt > 0 && l.accuracy <= 15f &&
+                l.time - disconnectAt in 15_000L..(15 * 60_000L)
+            ) {
+                exitDone = true
+                verifyExit(l, disconnectAt)
             }
         }
     }

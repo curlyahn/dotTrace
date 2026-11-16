@@ -102,6 +102,8 @@ class TrackingService : LifecycleService() {
     /** 주차했던 곳들 (내 차로 이 근처에 오면 3초마다 기록해 입구 위치를 정확히) */
     private var knownParkingSpots: List<Pair<Double, Double>> = emptyList()
     private var nearParking = false
+    /** 내 차 블루투스가 마지막으로 끊긴 시각 */
+    private var carLeftAt = 0L
     private var carReceiverOn = false
     /** 내 차 승차·하차와 주차 위치·층 기록 */
     private val parking by lazy { com.dot.trace.parking.ParkingRecorder(this, app, lifecycleScope) }
@@ -139,6 +141,7 @@ class TrackingService : LifecycleService() {
     private fun onCarDisconnected() {
         if (!carConnected) return
         carConnected = false
+        carLeftAt = System.currentTimeMillis()
         setNearParking(false)
         updateStatus { it.copy(inCar = false) }
         // 주차 기록: 입구 위치(모아 둔 위치를 바로 받아서) + 기압 + 와이파이
@@ -260,6 +263,12 @@ class TrackingService : LifecycleService() {
             lifecycleScope.launch { app.prefs.setTrackingEnabled(false) }
             shutdown()
             return START_NOT_STICKY
+        }
+
+        // 차에서 내린 직후 앱이 열림(루틴): 가장 먼저 지금 위치를 한 번 기록
+        if (intent?.action == ACTION_CAPTURE) {
+            if (started && System.currentTimeMillis() - carLeftAt < 3 * 60_000L) captureNow()
+            return START_STICKY
         }
 
         if (!enterForeground()) return START_NOT_STICKY
@@ -702,6 +711,12 @@ class TrackingService : LifecycleService() {
 
     companion object {
         private const val ACTION_STOP = "com.dot.trace.STOP"
+        private const val ACTION_CAPTURE = "com.dot.trace.CAPTURE"
+
+        /** 앱이 열릴 때: 방금 차에서 내렸으면 지금 위치를 바로 한 번 기록 (기록 중일 때만 부를 것) */
+        fun captureIfJustParked(context: Context) {
+            runCatching { context.startService(Intent(context, TrackingService::class.java).setAction(ACTION_CAPTURE)) }
+        }
         private const val ACTION_TRANSITION = "com.dot.trace.ACTIVITY_TRANSITION"
         private const val NOTIFICATION_ID = 1
         private const val RESUME_NOTIFICATION_ID = 2

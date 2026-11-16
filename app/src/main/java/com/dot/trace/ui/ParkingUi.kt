@@ -110,6 +110,7 @@ fun ParkingCard(
     onClose: () -> Unit,
     onConfirmFloor: () -> Unit,
     onEdit: () -> Unit,
+    onPickFloor: (Int) -> Unit = {},
     onTakePhoto: () -> Unit,
     onShowPhoto: () -> Unit,
 ) {
@@ -137,7 +138,9 @@ fun ParkingCard(
                 Spacer(Modifier.width(10.dp))
                 Column(Modifier.weight(1f)) {
                     Text(
-                        if (p.leftAt == null) "내 차 · 지금 주차 중" else "내 차 주차 기록",
+                        if (p.leftAt != null) "내 차 주차 기록"
+                        else if (!p.confirmed && now - p.parkedAt < 10 * 60_000L) "방금 주차했어요"
+                        else "내 차 · 지금 주차 중",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
                         color = Dot.Text,
@@ -179,23 +182,77 @@ fun ParkingCard(
                         ?: if (p.entrySamples != null) "측정 부족 (입구 ${p.entrySamples}개 · 주차 ${p.parkSamples ?: 0}개)" else "없음",
                 )
             }
-            // 층 확인 (추정일 때만)
-            if (!p.confirmed && p.floorEst != null) {
+            val split = FloorEstimator.isSplit(p.lat, p.lng)
+            // 층 확인: 큰 버튼 한 번으로 (추정한 층이 가운데)
+            if (!p.confirmed) {
+                Spacer(Modifier.height(10.dp))
+                Row(verticalAlignment = Alignment.Bottom) {
+                    Text("몇 층인가요?  ", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, color = Dot.Text)
+                    Text("한 번 누르면 이 건물을 배워요", style = MaterialTheme.typography.labelSmall, color = Dot.Muted)
+                }
                 Spacer(Modifier.height(8.dp))
-                Row(
-                    Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
-                        .border(1.dp, Dot.Lime.copy(alpha = 0.45f), RoundedCornerShape(14.dp))
-                        .padding(start = 12.dp, end = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    val est = p.floorEst
+                    // 한 층 위 · 추정 · 한 층 아래 (나올 때 측정이 다르면 그 층도)
+                    val opts = if (est != null) (listOf(est + 1, est, est - 1) + listOfNotNull(p.floorExit)).distinct().sortedDescending().take(4) else emptyList()
+                    opts.forEach { f ->
+                        val on = f == est
+                        Box(
+                            Modifier.weight(1f).height(56.dp).clip(RoundedCornerShape(16.dp))
+                                .background(if (on) Dot.Lime else Dot.Surface2).clickable { onPickFloor(f) },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(FloorEstimator.label(f, split), fontSize = 18.sp, fontWeight = FontWeight.Black, color = if (on) Dot.Ink else Dot.Text, maxLines = 1)
+                        }
+                    }
+                    Box(
+                        Modifier.weight(1f).height(56.dp).clip(RoundedCornerShape(16.dp))
+                            .border(2.dp, Dot.Line, RoundedCornerShape(16.dp)).clickable(onClick = onEdit),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(if (est != null) "다른 층" else "층 고르기", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold, color = Dot.Muted, maxLines = 1)
+                    }
+                }
+                if (p.floorEst != null) {
+                    Text(
+                        "${FloorEstimator.label(p.floorEst, split)}로 추정 · ${FloorEstimator.sourceLabel(p.floorSource)}",
+                        style = MaterialTheme.typography.labelSmall, color = Dot.Lime, modifier = Modifier.padding(top = 4.dp),
+                    )
+                }
+            }
+            // 나올 때 기압 검증
+            Spacer(Modifier.height(8.dp))
+            val exitFloor = p.floorExit
+            val exitDelta = if (p.parkHpa != null && p.exitHpa != null) p.parkHpa - p.exitHpa else null
+            if (exitFloor != null && exitDelta != null) {
+                val same = exitFloor == p.shownFloor
+                val c = if (same) Dot.Lime else Dot.Amber
+                Column(
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(c.copy(alpha = 0.08f))
+                        .border(1.dp, c.copy(alpha = 0.4f), RoundedCornerShape(14.dp)).padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
                     Text(
-                        "${FloorEstimator.longLabelAt(p.floorEst, p.lat, p.lng)} 맞나요? 확인하면 이 건물의 층을 배워요",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Dot.Text,
-                        modifier = Modifier.weight(1f),
+                        when {
+                            same -> "✓ 검증 완료 · 두 측정이 모두 ${FloorEstimator.label(exitFloor, split)}"
+                            p.confirmed -> "나올 때 측정은 ${FloorEstimator.label(exitFloor, split)}였어요 (확인한 층을 그대로 써요)"
+                            else -> "확인 필요 · ${FloorEstimator.label(p.shownFloor, split)} 또는 ${FloorEstimator.label(exitFloor, split)}"
+                        },
+                        style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold, color = c,
                     )
-                    TextButton(onClick = onConfirmFloor) { Text("맞아요", color = Dot.Lime, fontWeight = FontWeight.Bold) }
-                    TextButton(onClick = onEdit) { Text("고치기", color = Dot.Muted) }
+                    p.deltaHpa?.let { Text("① 들어갈 때: 입구 → 주차 자리 %+.2f hPa".format(Locale.US, it), style = MaterialTheme.typography.labelSmall, color = Dot.Text) }
+                    Text("② 나올 때: 주차 자리 → 지상 %+.2f hPa".format(Locale.US, -exitDelta), style = MaterialTheme.typography.labelSmall, color = Dot.Text)
+                }
+            } else if (p.leftAt == null && now - p.parkedAt < 15 * 60_000L) {
+                Column(
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Dot.Surface2).padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Text(
+                        if (p.wifiScanned != null) "✓ 와이파이 새로 검색 · ${p.wifiScanned}개 저장" else "· 와이파이: 휴대폰이 검색해 둔 값 사용",
+                        style = MaterialTheme.typography.labelSmall, color = if (p.wifiScanned != null) Dot.Text else Dot.Muted,
+                    )
+                    Text("… 걸어 나가 GPS가 잡히면 기압으로 한 번 더 검증해요", style = MaterialTheme.typography.labelSmall, color = Dot.Muted)
                 }
             }
             // 구역 메모·사진

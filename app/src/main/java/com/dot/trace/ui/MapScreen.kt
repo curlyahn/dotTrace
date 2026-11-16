@@ -479,6 +479,7 @@ fun MapScreen(
                 onClose = { vm.selectParking(null) },
                 onConfirmFloor = { vm.confirmFloor(selectedParking) },
                 onEdit = { editParking = selectedParking },
+                onPickFloor = { f -> vm.pickFloor(selectedParking, f) },
                 onTakePhoto = { startPhoto(selectedParking) },
                 onShowPhoto = { showParkingPhoto = selectedParking.photo },
             ) else StatusCard(

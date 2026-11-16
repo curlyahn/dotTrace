@@ -169,6 +169,12 @@ data class ParkingEntity(
     /** 기압 측정에 쓴 값 개수 (입구, 하차) — 측정이 제대로 됐는지 확인용 */
     val entrySamples: Int? = null,
     val parkSamples: Int? = null,
+    /** 걸어 나와 지상에서 GPS가 다시 잡힌 시각과 그때 기압 → 층을 한 번 더 계산 (검증) */
+    val exitAt: Long? = null,
+    val exitHpa: Float? = null,
+    val floorExit: Int? = null,
+    /** 앱이 열려 주차 자리에서 와이파이를 새로 검색해 저장한 개수 (없으면 예전 검색 결과) */
+    val wifiScanned: Int? = null,
 ) {
     /** 화면에 보일 층: 확인한 층, 없으면 추정 */
     val shownFloor: Int? get() = floor ?: floorEst
@@ -382,7 +388,7 @@ interface AnalysisDao {
 
 @Database(
     entities = [PointEntity::class, PlaceEntity::class, OverrideEntity::class, ModeRuleEntity::class, PoiNameEntity::class, DayCacheEntity::class, ModeSpanEntity::class, ParkingEntity::class, FloorCalibEntity::class, FrozenDayEntity::class],
-    version = 12,
+    version = 13,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -395,7 +401,7 @@ abstract class AppDatabase : RoomDatabase() {
 
         fun get(context: Context): AppDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(context.applicationContext, AppDatabase::class.java, "dottrace.db")
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13)
                 .build()
                 .also { instance = it }
         }
@@ -520,6 +526,16 @@ abstract class AppDatabase : RoomDatabase() {
         private val MIGRATION_11_12 = object : Migration(11, 12) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE places ADD COLUMN splitLevels INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        /** 주차: 나올 때 기압 검증, 새로 검색한 와이파이 */
+        private val MIGRATION_12_13 = object : Migration(12, 13) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE parkings ADD COLUMN exitAt INTEGER")
+                db.execSQL("ALTER TABLE parkings ADD COLUMN exitHpa REAL")
+                db.execSQL("ALTER TABLE parkings ADD COLUMN floorExit INTEGER")
+                db.execSQL("ALTER TABLE parkings ADD COLUMN wifiScanned INTEGER")
             }
         }
     }
